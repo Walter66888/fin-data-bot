@@ -129,4 +129,40 @@ async function pushLatestMarketData() {
     if (success) {
       // 更新最後通知日期
       lastNotifiedDate = latestData.date;
-      logger.info(`已推送 ${latestData.date} 的完整市
+      logger.info(`已推送 ${latestData.date} 的完整市場資料`);
+    }
+    
+    return success;
+  } catch (error) {
+    logger.error('推送最新市場資料時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
+ * 發送系統錯誤或警告通知
+ * 
+ * @param {string} title 通知標題
+ * @param {string} errorMessage 錯誤訊息
+ * @returns {Promise<boolean>} 發送成功返回 true，否則返回 false
+ */
+async function sendAlertNotification(title, errorMessage) {
+  try {
+    // 構建警報訊息
+    const message = `⚠️ ${title} ⚠️\n\n${errorMessage}\n\n時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
+    
+    // 發送通知
+    return await sendNotify(message);
+  } catch (error) {
+    logger.error('發送警報通知時發生錯誤:', error);
+    return false;
+  }
+}
+
+// 導出函數
+module.exports = {
+  sendNotify,
+  sendUpdateNotification,
+  pushLatestMarketData,
+  sendAlertNotification
+};
