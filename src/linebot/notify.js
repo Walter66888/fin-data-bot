@@ -1,12 +1,13 @@
 /**
- * Line Notify 通知模組
- * 用於發送 Line 通知到指定群組
+ * Line Notify 通知模組（更新版）
+ * 用於發送 Line 通知到指定群組，支援整合資料
  */
 
 const axios = require('axios');
 const logger = require('../utils/logger');
-const messages = require('./messages');
+const messages = require('./updated-messages');
 const MarketData = require('../db/models/MarketData');
+const FuturesMarketData = require('../db/models/FuturesMarketData');
 
 // Line Notify API URL
 const LINE_NOTIFY_API = 'https://notify-api.line.me/api/notify';
@@ -96,45 +97,92 @@ async function sendUpdateNotification(marketData) {
 }
 
 /**
- * 推送最新的市場資料到群組
- * 用於定時推送或手動觸發
+ * 發送整合市場資料更新通知
  * 
- * @returns {Promise<boolean>} 推送成功返回 true，否則返回 false
+ * @param {string} date 日期字串 (YYYY-MM-DD)
+ * @returns {Promise<boolean>} 發送成功返回 true，否則返回 false
  */
-async function pushLatestMarketData() {
+async function sendIntegratedUpdateNotification(date) {
   try {
-    // 從資料庫獲取最新的市場資料
-    const latestData = await MarketData.getLatest();
-    
-    if (!latestData) {
-      logger.error('無法獲取最新市場資料，取消推送');
-      return false;
-    }
-    
-    // 檢查是否為當天的資料
-    const currentDate = new Date().toISOString().split('T')[0];
-    
     // 避免同一天重複發送通知
-    if (lastNotifiedDate === latestData.date) {
-      logger.info(`今日 (${latestData.date}) 已經發送過通知，不再重複發送`);
+    if (lastNotifiedDate === date) {
+      logger.info(`今日 (${date}) 已經發送過通知，不再重複發送`);
       return false;
     }
     
-    // 格式化完整的市場資料訊息
-    const message = messages.formatMarketDataMessage(latestData);
+    // 格式化整合通知訊息
+    const message = await messages.formatIntegratedUpdateNotification(date);
     
     // 發送通知
     const success = await sendNotify(message);
     
     if (success) {
       // 更新最後通知日期
-      lastNotifiedDate = latestData.date;
-      logger.info(`已推送 ${latestData.date} 的完整市場資料`);
+      lastNotifiedDate = date;
+      logger.info(`已發送 ${date} 的整合市場資料更新通知`);
     }
     
     return success;
   } catch (error) {
-    logger.error('推送最新市場資料時發生錯誤:', error);
+    logger.error('準備發送整合更新通知時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
+ * 推送最新的整合市場資料到群組
+ * 用於定時推送或手動觸發
+ * 
+ * @returns {Promise<boolean>} 推送成功返回 true，否則返回 false
+ */
+async function pushLatestIntegratedMarketData() {
+  try {
+    // 從資料庫獲取最新的證交所資料
+    const latestMarketData = await MarketData.getLatest();
+    
+    // 從資料庫獲取最新的期交所資料
+    const latestFuturesData = await FuturesMarketData.getLatest();
+    
+    if (!latestMarketData && !latestFuturesData) {
+      logger.error('無法獲取任何最新市場資料，取消推送');
+      return false;
+    }
+    
+    // 確定最新的資料日期
+    let latestDate = '';
+    
+    if (latestMarketData && latestFuturesData) {
+      // 如果兩者都有資料，使用最新的日期
+      latestDate = latestMarketData.date > latestFuturesData.date 
+        ? latestMarketData.date 
+        : latestFuturesData.date;
+    } else if (latestMarketData) {
+      latestDate = latestMarketData.date;
+    } else {
+      latestDate = latestFuturesData.date;
+    }
+    
+    // 避免同一天重複發送通知
+    if (lastNotifiedDate === latestDate) {
+      logger.info(`今日 (${latestDate}) 已經發送過通知，不再重複發送`);
+      return false;
+    }
+    
+    // 格式化完整的整合市場資料訊息
+    const message = await messages.formatIntegratedMarketDataMessage(latestDate);
+    
+    // 發送通知
+    const success = await sendNotify(message);
+    
+    if (success) {
+      // 更新最後通知日期
+      lastNotifiedDate = latestDate;
+      logger.info(`已推送 ${latestDate} 的完整整合市場資料`);
+    }
+    
+    return success;
+  } catch (error) {
+    logger.error('推送最新整合市場資料時發生錯誤:', error);
     return false;
   }
 }
@@ -163,6 +211,7 @@ async function sendAlertNotification(title, errorMessage) {
 module.exports = {
   sendNotify,
   sendUpdateNotification,
-  pushLatestMarketData,
+  sendIntegratedUpdateNotification,
+  pushLatestIntegratedMarketData,
   sendAlertNotification
 };
