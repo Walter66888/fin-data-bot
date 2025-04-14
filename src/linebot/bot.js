@@ -71,6 +71,11 @@ module.exports = function(bot) {
     const marketData = await findMarketData(dateStr);
     
     if (marketData) {
+      // 如果返回的資料日期與查詢日期不同，提示用戶
+      if (marketData.date !== dateStr) {
+        await event.reply(`找不到 ${dateStr} 的盤後資料，將顯示最近的交易日 ${marketData.date} 的資料。`);
+      }
+      
       // 找到資料，回覆格式化訊息
       const formattedMessage = messages.formatMarketDataMessage(marketData);
       await event.reply(formattedMessage);
@@ -93,6 +98,11 @@ module.exports = function(bot) {
     const futuresData = await findFuturesData(dateStr);
     
     if (futuresData) {
+      // 如果返回的資料日期與查詢日期不同，提示用戶
+      if (futuresData.date !== dateStr) {
+        await event.reply(`找不到 ${dateStr} 的期貨資料，將顯示最近的交易日 ${futuresData.date} 的資料。`);
+      }
+      
       // 找到資料，構建訊息
       let message = `📊 台指期貨盤後資料 (${futuresData.date}) 📊\n\n`;
       
@@ -166,6 +176,11 @@ module.exports = function(bot) {
     const futuresData = await findFuturesData(dateStr);
     
     if (futuresData && futuresData.institutionalInvestors) {
+      // 如果返回的資料日期與查詢日期不同，提示用戶
+      if (futuresData.date !== dateStr) {
+        await event.reply(`找不到 ${dateStr} 的籌碼資料，將顯示最近的交易日 ${futuresData.date} 的資料。`);
+      }
+      
       // 找到資料，構建訊息
       let message = `📊 三大法人買賣超籌碼快報 (${futuresData.date}) 📊\n\n`;
       
@@ -260,8 +275,29 @@ module.exports = function(bot) {
       return;
     }
     
+    // 查詢當日或最近的證交所資料
+    const marketData = await findMarketData(dateStr);
+    
+    // 查詢當日或最近的期交所資料
+    const futuresData = await findFuturesData(dateStr);
+    
+    // 取得資料的實際日期（兩者中較新的）
+    let actualDate = dateStr;
+    if (marketData && futuresData) {
+      actualDate = marketData.date > futuresData.date ? marketData.date : futuresData.date;
+    } else if (marketData) {
+      actualDate = marketData.date;
+    } else if (futuresData) {
+      actualDate = futuresData.date;
+    }
+    
+    // 如果實際日期與查詢日期不同，提示用戶
+    if (actualDate !== dateStr) {
+      await event.reply(`找不到 ${dateStr} 的整合資料，將顯示最近的交易日 ${actualDate} 的資料。`);
+    }
+    
     // 格式化整合市場資料訊息
-    const formattedMessage = await messages.formatIntegratedMarketDataMessage(dateStr);
+    const formattedMessage = await messages.formatIntegratedMarketDataMessage(actualDate);
     
     // 回覆訊息
     await event.reply(formattedMessage);
@@ -311,21 +347,51 @@ module.exports = function(bot) {
         // 引入排程模組
         const scheduler = require('../scheduler/jobs');
         
+        logger.info(`嘗試立即抓取 ${dateStr} 的證交所資料`);
         // 嘗試立即抓取資料
         await scheduler.checkAndUpdateMarketData();
         
         // 再次嘗試查詢今天的資料
         specificData = await MarketData.findOne({ date: dateStr });
         if (specificData) {
+          logger.info(`成功獲取 ${dateStr} 的證交所資料`);
           return specificData;
+        }
+        
+        // 如果還是沒找到當日資料，獲取最新資料
+        const latestData = await MarketData.getLatest();
+        if (latestData) {
+          // 檢查最新資料是否為非當日資料
+          if (latestData.date !== dateStr) {
+            logger.info(`未找到 ${dateStr} 的證交所資料，將使用最新資料日期: ${latestData.date}`);
+            // 將這視為有效的資料（可能是因為今天是非交易日或資料尚未更新）
+            return latestData;
+          }
         }
       } catch (error) {
         logger.error('立即抓取證交所資料時發生錯誤:', error);
       }
+    } else {
+      // 如果不是今天的資料，嘗試獲取之前最近的一天資料
+      try {
+        const prevData = await MarketData.findOne({ date: { $lt: dateStr } }).sort({ date: -1 });
+        if (prevData) {
+          logger.info(`未找到 ${dateStr} 的證交所資料，將使用前一個交易日: ${prevData.date}`);
+          return prevData;
+        }
+      } catch (error) {
+        logger.error(`查找 ${dateStr} 之前的證交所資料時發生錯誤:`, error);
+      }
     }
     
     // 無論如何，如果找不到指定日期的資料，都返回最新的一筆資料
-    return await MarketData.getLatest();
+    const latestData = await MarketData.getLatest();
+    if (latestData) {
+      logger.info(`使用最新的證交所資料日期: ${latestData.date}`);
+    } else {
+      logger.warn('資料庫中沒有任何證交所資料');
+    }
+    return latestData;
   }
   
   // 尋找期貨市場資料（期交所）
@@ -344,20 +410,50 @@ module.exports = function(bot) {
         // 引入排程模組
         const scheduler = require('../scheduler/jobs');
         
+        logger.info(`嘗試立即抓取 ${dateStr} 的期交所資料`);
         // 嘗試立即抓取資料
         await scheduler.checkAndUpdateFuturesMarketData();
         
         // 再次嘗試查詢今天的資料
         specificData = await FuturesMarketData.findOne({ date: dateStr });
         if (specificData) {
+          logger.info(`成功獲取 ${dateStr} 的期交所資料`);
           return specificData;
+        }
+        
+        // 如果還是沒找到當日資料，獲取最新資料
+        const latestData = await FuturesMarketData.getLatest();
+        if (latestData) {
+          // 檢查最新資料是否為非當日資料
+          if (latestData.date !== dateStr) {
+            logger.info(`未找到 ${dateStr} 的期交所資料，將使用最新資料日期: ${latestData.date}`);
+            // 將這視為有效的資料（可能是因為今天是非交易日或資料尚未更新）
+            return latestData;
+          }
         }
       } catch (error) {
         logger.error('立即抓取期交所資料時發生錯誤:', error);
       }
+    } else {
+      // 如果不是今天的資料，嘗試獲取之前最近的一天資料
+      try {
+        const prevData = await FuturesMarketData.findOne({ date: { $lt: dateStr } }).sort({ date: -1 });
+        if (prevData) {
+          logger.info(`未找到 ${dateStr} 的期交所資料，將使用前一個交易日: ${prevData.date}`);
+          return prevData;
+        }
+      } catch (error) {
+        logger.error(`查找 ${dateStr} 之前的期交所資料時發生錯誤:`, error);
+      }
     }
     
     // 無論如何，如果找不到指定日期的資料，都返回最新的一筆資料
-    return await FuturesMarketData.getLatest();
+    const latestData = await FuturesMarketData.getLatest();
+    if (latestData) {
+      logger.info(`使用最新的期交所資料日期: ${latestData.date}`);
+    } else {
+      logger.warn('資料庫中沒有任何期交所資料');
+    }
+    return latestData;
   }
 };
