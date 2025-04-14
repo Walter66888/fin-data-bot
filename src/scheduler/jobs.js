@@ -145,6 +145,7 @@ async function checkAndUpdateAllMarketData() {
 
 /**
  * 檢查並更新證交所市場資料
+ * 優先使用官方網站 API 獲取資料，如果失敗則嘗試使用舊版 API
  * 
  * @returns {Promise<boolean>} 如果成功更新資料返回 true，否則返回 false
  */
@@ -152,44 +153,54 @@ async function checkAndUpdateMarketData() {
   logger.info('開始檢查證交所市場資料更新...');
   
   try {
-    // 獲取最新資料 (不檢查更新狀態，直接獲取)
-    logger.info('正在獲取集中市場成交資料...');
-    const marketInfoData = await twseAPI.getDailyMarketInfo();
+    // 優先使用官方網站 API 獲取資料
+    logger.info('正在通過官方網站 API 獲取集中市場成交資料...');
+    const officialMarketData = await twseAPI.getOfficialDailyMarketInfo();
     
-    if (marketInfoData && marketInfoData.length > 0) {
-      // 記錄原始資料中的所有日期，用於診斷
-      if (marketInfoData.length > 1) {
-        const dates = marketInfoData.map(item => item.Date).join(', ');
-        logger.info(`API 返回的所有日期: ${dates}`);
-      } else {
-        logger.info(`API 返回的日期: ${marketInfoData[0].Date}`);
-      }
-      
-      // 處理原始資料
-      const processedData = twseAPI.processDailyMarketInfo(marketInfoData);
-      
-      if (processedData) {
-        // 檢查資料日期是否為當日
-        const today = format(new Date(), 'yyyy-MM-dd');
-        if (processedData.date !== today) {
-          logger.info(`API返回的資料日期 ${processedData.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
-          
-          // 檢查資料庫中是否已有這個日期的資料
-          const existingData = await MarketData.findOne({ date: processedData.date });
-          if (existingData) {
-            logger.info(`資料庫中已存在 ${processedData.date} 的資料，將進行更新`);
-          } else {
-            logger.info(`資料庫中不存在 ${processedData.date} 的資料，將創建新記錄`);
-          }
-        }
-        
-        // 儲存到資料庫
-        await saveMarketData(processedData, marketInfoData);
-        logger.info(`成功更新證交所市場資料: ${processedData.date}`);
-        return true;
-      }
+    let processedData = null;
+    let rawData = null;
+    
+    // 處理官方網站 API 資料
+    if (officialMarketData && officialMarketData.data && officialMarketData.data.length > 0) {
+      logger.info(`官方網站 API 成功返回資料，狀態: ${officialMarketData.stat}, 日期: ${officialMarketData.date}`);
+      processedData = twseAPI.processOfficialDailyMarketInfo(officialMarketData);
+      rawData = officialMarketData;
     } else {
-      logger.info('無法獲取集中市場成交資料或資料為空');
+      logger.warn('官方網站 API 返回資料無效或為空，嘗試使用舊版 API...');
+      
+      // 嘗試使用舊版 API 獲取資料
+      const oldMarketData = await twseAPI.getDailyMarketInfo();
+      
+      if (oldMarketData && oldMarketData.length > 0) {
+        logger.info('舊版 API 成功返回資料');
+        processedData = twseAPI.processDailyMarketInfo(oldMarketData);
+        rawData = oldMarketData;
+      } else {
+        logger.error('無法從任何 API 獲取有效的市場資料');
+        return false;
+      }
+    }
+    
+    // 如果成功處理資料，則儲存到資料庫
+    if (processedData) {
+      // 檢查資料日期是否為當日
+      const today = format(new Date(), 'yyyy-MM-dd');
+      if (processedData.date !== today) {
+        logger.info(`API返回的資料日期 ${processedData.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+      }
+      
+      // 檢查資料庫中是否已有這個日期的資料
+      const existingData = await MarketData.findOne({ date: processedData.date });
+      if (existingData) {
+        logger.info(`資料庫中已存在 ${processedData.date} 的資料，將進行更新`);
+      } else {
+        logger.info(`資料庫中不存在 ${processedData.date} 的資料，將創建新記錄`);
+      }
+      
+      // 儲存到資料庫
+      await saveMarketData(processedData, rawData);
+      logger.info(`成功更新證交所市場資料: ${processedData.date}`);
+      return true;
     }
     
     return false;
@@ -306,7 +317,7 @@ async function checkAndUpdateFuturesMarketData() {
  * 保存證交所市場資料到資料庫
  * 
  * @param {Object} processedData 處理後的資料
- * @param {Array} rawData 原始 API 資料
+ * @param {Array|Object} rawData 原始 API 資料
  */
 async function saveMarketData(processedData, rawData) {
   try {
