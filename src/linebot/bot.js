@@ -71,42 +71,58 @@ module.exports = function(bot) {
       }
     }
     
-    // 檢查指定日期是否為交易日
-    const isHoliday = await Holiday.isHoliday(dateStr);
-    const dayOfWeek = new Date(dateStr).getDay();
-    const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+    // 查詢任何可用資料
+    const latestData = await MarketData.getLatest();
     
-    if (isHoliday || isWeekend) {
-      // 如果是休市日或週末，提示用戶並查找上一個交易日
-      const prevTradingDay = await Holiday.getPreviousTradingDay(dateStr);
+    // 如果資料庫中沒有資料，嘗試立即抓取
+    if (!latestData) {
+      await event.reply('正在嘗試獲取最新盤後資料，請稍候...');
       
-      if (prevTradingDay) {
-        await event.reply(`${dateStr} 為非交易日，將顯示 ${prevTradingDay} 的盤後資料。`);
-        dateStr = prevTradingDay;
-      } else {
-        await event.reply(`${dateStr} 為非交易日，且無法找到前一個交易日的資料。`);
+      try {
+        // 引入排程模組
+        const scheduler = require('../scheduler/jobs');
+        
+        // 嘗試立即抓取資料
+        const fetchResult = await scheduler.checkAndUpdateMarketData();
+        
+        if (fetchResult) {
+          // 如果成功抓取，再次查詢最新資料
+          const newData = await MarketData.getLatest();
+          
+          if (newData) {
+            const formattedMessage = messages.formatMarketDataMessage(newData);
+            await event.reply(formattedMessage);
+            return;
+          }
+        }
+        
+        // 如果仍然無法獲取資料
+        await event.reply('抱歉，無法獲取盤後資料，可能是資料尚未發布或系統正在維護中。請稍後再試。');
+        return;
+      } catch (error) {
+        logger.error('立即抓取資料時發生錯誤:', error);
+        await event.reply('抱歉，獲取資料時發生錯誤，請稍後再試。');
         return;
       }
     }
     
-    // 查詢指定日期的資料
-    const marketData = await MarketData.findOne({ date: dateStr });
-    
-    if (marketData) {
-      // 找到資料，回覆格式化訊息
-      const formattedMessage = messages.formatMarketDataMessage(marketData);
-      await event.reply(formattedMessage);
-    } else {
-      // 如果找不到指定日期的資料，查找最近的資料
-      const latestData = await MarketData.getLatest();
+    // 如果有指定日期，嘗試查找該日期的資料
+    if (dateStr !== format(new Date(), 'yyyy-MM-dd')) {
+      const specificData = await MarketData.findOne({ date: dateStr });
       
-      if (latestData) {
-        await event.reply(`找不到 ${dateStr} 的盤後資料，將顯示最新的盤後資料 (${latestData.date})。`);
-        const formattedMessage = messages.formatMarketDataMessage(latestData);
+      if (specificData) {
+        // 找到指定日期的資料
+        const formattedMessage = messages.formatMarketDataMessage(specificData);
         await event.reply(formattedMessage);
+        return;
       } else {
-        await event.reply('抱歉，目前資料庫中沒有盤後資料。');
+        // 找不到指定日期的資料，顯示最新資料
+        await event.reply(`找不到 ${dateStr} 的盤後資料，將顯示最新的盤後資料 (${latestData.date})。`);
       }
     }
+    
+    // 顯示最新資料
+    const formattedMessage = messages.formatMarketDataMessage(latestData);
+    await event.reply(formattedMessage);
   }
 };
