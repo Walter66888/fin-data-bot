@@ -126,9 +126,20 @@ function processDailyMarketInfo(data) {
     // 通常取最新的一筆資料（第一筆）
     const latestData = data[0];
     
+    // 轉換日期格式（將 ROC 年份轉換為西元年份）
+    // 例如 1140401 -> 2025-04-01
+    let dateStr = latestData.Date;
+    if (dateStr && dateStr.length === 7) {
+      const rocYear = parseInt(dateStr.substring(0, 3), 10);
+      const month = dateStr.substring(3, 5);
+      const day = dateStr.substring(5, 7);
+      const westernYear = rocYear + 1911;
+      dateStr = `${westernYear}-${month}-${day}`;
+    }
+    
     // 轉換為數字型別
     const result = {
-      date: latestData.Date,
+      date: dateStr,
       market: {
         tradeVolume: parseFloat(latestData.TradeVolume.replace(/,/g, '')) / 100000000, // 轉為億股
         tradeValue: parseFloat(latestData.TradeValue.replace(/,/g, '')) / 100000000, // 轉為億元
