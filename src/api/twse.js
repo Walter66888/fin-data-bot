@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const logger = require('../utils/logger');
+const { format, parse, isValid } = require('date-fns');
 
 // API 基礎 URL
 const BASE_URL = 'https://openapi.twse.com.tw/v1';
@@ -110,6 +111,75 @@ async function checkDataUpdated(endpoint) {
 }
 
 /**
+ * 標準化日期格式（將可能的各種格式轉換為YYYY-MM-DD）
+ * 
+ * @param {string} dateStr 原始日期字串
+ * @returns {string} 標準化的日期字串 (YYYY-MM-DD)
+ */
+function standardizeDate(dateStr) {
+  if (!dateStr) return '';
+  
+  // 處理中華民國年份格式（例如 1140401）
+  if (dateStr.length === 7 && !dateStr.includes('-')) {
+    try {
+      const rocYear = parseInt(dateStr.substring(0, 3), 10);
+      const month = dateStr.substring(3, 5);
+      const day = dateStr.substring(5, 7);
+      const westernYear = rocYear + 1911;
+      return `${westernYear}-${month}-${day}`;
+    } catch (e) {
+      logger.warn(`無法解析ROC日期格式: ${dateStr}`, e);
+      // 繼續嘗試其他格式
+    }
+  }
+  
+  // 處理西元年份格式（例如 20250401）
+  if (dateStr.length === 8 && !dateStr.includes('-')) {
+    try {
+      const year = dateStr.substring(0, 4);
+      const month = dateStr.substring(4, 6);
+      const day = dateStr.substring(6, 8);
+      
+      // 使用date-fns驗證日期有效性
+      const parsedDate = parse(`${year}-${month}-${day}`, 'yyyy-MM-dd', new Date());
+      if (isValid(parsedDate)) {
+        return `${year}-${month}-${day}`;
+      }
+    } catch (e) {
+      logger.warn(`無法解析西元日期格式: ${dateStr}`, e);
+      // 繼續嘗試其他格式
+    }
+  }
+  
+  // 檢查是否已經是標準格式 (YYYY-MM-DD)
+  if (dateStr.includes('-') && dateStr.length === 10) {
+    try {
+      const parsedDate = parse(dateStr, 'yyyy-MM-dd', new Date());
+      if (isValid(parsedDate)) {
+        return dateStr;
+      }
+    } catch (e) {
+      logger.warn(`無法解析標準日期格式: ${dateStr}`, e);
+      // 繼續處理
+    }
+  }
+  
+  // 最後嘗試讓JavaScript自己解析
+  try {
+    const date = new Date(dateStr);
+    if (isValid(date)) {
+      return format(date, 'yyyy-MM-dd');
+    }
+  } catch (e) {
+    logger.warn(`無法自動解析日期: ${dateStr}`, e);
+  }
+  
+  // 如果所有嘗試都失敗，記錄警告並返回原始字串
+  logger.warn(`無法標準化日期格式: ${dateStr}`);
+  return dateStr;
+}
+
+/**
  * 處理每日市場資訊資料
  * 將原始資料轉換為更易使用的格式
  * 
@@ -126,18 +196,10 @@ function processDailyMarketInfo(data) {
     // 通常取最新的一筆資料（第一筆）
     const latestData = data[0];
     
-    // 轉換日期格式（將 ROC 年份轉換為西元年份）
-    // 例如 1140401 -> 2025-04-01
-    let dateStr = latestData.Date;
-    if (dateStr && dateStr.length === 7) {
-      const rocYear = parseInt(dateStr.substring(0, 3), 10);
-      const month = dateStr.substring(3, 5);
-      const day = dateStr.substring(5, 7);
-      const westernYear = rocYear + 1911;
-      dateStr = `${westernYear}-${month}-${day}`;
-    }
+    // 標準化日期格式
+    const dateStr = standardizeDate(latestData.Date);
     
-    // 轉換為數字型別
+    // 轉換為數字型別並移除千分位符號
     const result = {
       date: dateStr,
       market: {
@@ -157,6 +219,7 @@ function processDailyMarketInfo(data) {
       result.taiex.changePercent = (result.taiex.change / prevIndex) * 100;
     }
     
+    logger.info(`成功處理每日市場資訊，日期: ${result.date}, 加權指數: ${result.taiex.index}`);
     return result;
   } catch (error) {
     logger.error('處理每日市場資訊時發生錯誤:', error);
@@ -169,5 +232,7 @@ module.exports = {
   getHolidaySchedule,
   getDailyMarketInfo,
   checkDataUpdated,
-  processDailyMarketInfo
+  processDailyMarketInfo,
+  standardizeDate,
+  fetchAPI
 };
