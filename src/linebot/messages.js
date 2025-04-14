@@ -204,18 +204,7 @@ async function formatIntegratedMarketDataMessage(date) {
     
     return message;
   } catch (error) {
-    console.error('格式化整合更新通知訊息時發生錯誤:', error);
-    return '市場資料已更新，輸入「盤後資料」查看詳情。';
-  }
-}
-
-// 導出函數
-module.exports = {
-  formatMarketDataMessage,
-  formatUpdateNotification,
-  formatIntegratedMarketDataMessage,
-  formatIntegratedUpdateNotification
-};('格式化整合市場資料訊息時發生錯誤:', error);
+    console.error('格式化整合市場資料訊息時發生錯誤:', error);
     return '格式化整合資料時發生錯誤，請聯繫管理員。';
   }
 }
