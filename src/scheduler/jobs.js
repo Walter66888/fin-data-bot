@@ -161,6 +161,12 @@ async function checkAndUpdateMarketData() {
       const processedData = twseAPI.processDailyMarketInfo(marketInfoData);
       
       if (processedData) {
+        // 檢查資料日期是否為當日
+        const today = format(new Date(), 'yyyy-MM-dd');
+        if (processedData.date !== today) {
+          logger.info(`API返回的資料日期 ${processedData.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+        }
+        
         // 儲存到資料庫
         await saveMarketData(processedData, marketInfoData);
         logger.info(`成功更新證交所市場資料: ${processedData.date}`);
@@ -198,6 +204,11 @@ async function checkAndUpdateFuturesMarketData() {
       const processedLargeTradersFutures = taifexAPI.processLargeTradersFutures(largeTradersFuturesData);
       
       if (processedLargeTradersFutures) {
+        // 檢查資料日期是否為當日
+        if (processedLargeTradersFutures.date !== today) {
+          logger.info(`期貨大額交易人API返回的資料日期 ${processedLargeTradersFutures.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+        }
+        
         // 更新期貨市場資料
         await updateFuturesMarketData(processedLargeTradersFutures, {
           largeTradersFutures: largeTradersFuturesData
@@ -219,6 +230,11 @@ async function checkAndUpdateFuturesMarketData() {
       const processedPCR = taifexAPI.processPutCallRatio(pcrData);
       
       if (processedPCR) {
+        // 檢查資料日期是否為當日
+        if (processedPCR.date !== today) {
+          logger.info(`PCR比率API返回的資料日期 ${processedPCR.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+        }
+        
         // 更新期貨市場資料
         await updateFuturesMarketData(processedPCR, {
           putCallRatio: pcrData
@@ -447,6 +463,14 @@ async function integrateAndNotify() {
       latestDate = latestMarketData.date;
     } else {
       latestDate = latestFuturesData.date;
+    }
+    
+    // 當前日期
+    const today = format(new Date(), 'yyyy-MM-dd');
+    
+    // 檢查是否與當日日期不同
+    if (latestDate !== today) {
+      logger.info(`最新資料日期 ${latestDate} 不是當日 ${today}，可能是非交易日或資料尚未完全更新`);
     }
     
     // 使用整合後的資料發送通知
