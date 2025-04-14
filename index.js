@@ -1,5 +1,5 @@
 /**
- * 主程式入口點 (更新版)
+ * 主程式入口點
  * 負責初始化 Express 伺服器、Line Bot、數據庫連接和排程任務
  * 支援證交所和期交所整合資料
  */
@@ -11,10 +11,11 @@ require('dotenv').config();
 const express = require('express');
 const linebot = require('linebot');
 const db = require('./src/db/db');
-const scheduler = require('./src/scheduler/updated-jobs');
+const scheduler = require('./src/scheduler/jobs');
 const logger = require('./src/utils/logger');
 const twseAPI = require('./src/api/twse');
 const taifexAPI = require('./src/api/taifex');
+const { format } = require('date-fns');
 
 // 初始化 Express 應用程式
 const app = express();
@@ -40,7 +41,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 新增: 手動觸發證交所資料抓取的端點
+// 手動觸發證交所資料抓取的端點
 app.get('/api/fetch-twse', async (req, res) => {
   try {
     logger.info('手動觸發證交所資料抓取');
@@ -72,7 +73,7 @@ app.get('/api/fetch-twse', async (req, res) => {
   }
 });
 
-// 新增: 手動觸發期交所資料抓取的端點
+// 手動觸發期交所資料抓取的端點
 app.get('/api/fetch-taifex', async (req, res) => {
   try {
     logger.info('手動觸發期交所資料抓取');
@@ -104,7 +105,7 @@ app.get('/api/fetch-taifex', async (req, res) => {
   }
 });
 
-// 新增: 手動觸發所有資料抓取的端點
+// 手動觸發所有資料抓取的端點
 app.get('/api/fetch-all', async (req, res) => {
   try {
     logger.info('手動觸發所有市場資料抓取');
@@ -136,7 +137,7 @@ app.get('/api/fetch-all', async (req, res) => {
   }
 });
 
-// 新增: 顯示最新證交所資料的端點
+// 顯示最新證交所資料的端點
 app.get('/api/latest-twse', async (req, res) => {
   try {
     const MarketData = require('./src/db/models/MarketData');
@@ -166,7 +167,7 @@ app.get('/api/latest-twse', async (req, res) => {
   }
 });
 
-// 新增: 顯示最新期交所資料的端點
+// 顯示最新期交所資料的端點
 app.get('/api/latest-taifex', async (req, res) => {
   try {
     const FuturesMarketData = require('./src/db/models/FuturesMarketData');
@@ -196,13 +197,13 @@ app.get('/api/latest-taifex', async (req, res) => {
   }
 });
 
-// 新增: 顯示整合資料的端點
+// 顯示整合資料的端點
 app.get('/api/integrated-data', async (req, res) => {
   try {
     // 獲取請求中的日期參數，如果沒有則使用今天的日期
     const requestDate = req.query.date || format(new Date(), 'yyyy-MM-dd');
     
-    const messages = require('./src/linebot/updated-messages');
+    const messages = require('./src/linebot/messages');
     const formattedData = await messages.formatIntegratedMarketDataMessage(requestDate);
     
     res.status(200).json({
@@ -222,8 +223,8 @@ app.get('/api/integrated-data', async (req, res) => {
   }
 });
 
-// 載入更新版 Line Bot 訊息處理
-require('./src/linebot/updated-bot')(bot);
+// 載入 Line Bot 訊息處理
+require('./src/linebot/bot')(bot);
 
 // 連接到 MongoDB
 db.connect()
