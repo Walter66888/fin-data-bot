@@ -275,29 +275,9 @@ module.exports = function(bot) {
       return;
     }
     
-    // 查詢當日或最近的證交所資料
-    const marketData = await findMarketData(dateStr);
-    
-    // 查詢當日或最近的期交所資料
-    const futuresData = await findFuturesData(dateStr);
-    
-    // 取得資料的實際日期（兩者中較新的）
-    let actualDate = dateStr;
-    if (marketData && futuresData) {
-      actualDate = marketData.date > futuresData.date ? marketData.date : futuresData.date;
-    } else if (marketData) {
-      actualDate = marketData.date;
-    } else if (futuresData) {
-      actualDate = futuresData.date;
-    }
-    
-    // 如果實際日期與查詢日期不同，提示用戶
-    if (actualDate !== dateStr) {
-      await event.reply(`找不到 ${dateStr} 的整合資料，將顯示最近的交易日 ${actualDate} 的資料。`);
-    }
-    
-    // 格式化整合市場資料訊息
-    const formattedMessage = await messages.formatIntegratedMarketDataMessage(actualDate);
+    // 直接使用查詢日期進行格式化
+    // messages.js內部會處理找尋最近可用資料的邏輯
+    const formattedMessage = await messages.formatIntegratedMarketDataMessage(dateStr);
     
     // 回覆訊息
     await event.reply(formattedMessage);
