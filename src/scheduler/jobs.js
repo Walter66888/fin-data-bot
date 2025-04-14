@@ -157,6 +157,14 @@ async function checkAndUpdateMarketData() {
     const marketInfoData = await twseAPI.getDailyMarketInfo();
     
     if (marketInfoData && marketInfoData.length > 0) {
+      // 記錄原始資料中的所有日期，用於診斷
+      if (marketInfoData.length > 1) {
+        const dates = marketInfoData.map(item => item.Date).join(', ');
+        logger.info(`API 返回的所有日期: ${dates}`);
+      } else {
+        logger.info(`API 返回的日期: ${marketInfoData[0].Date}`);
+      }
+      
       // 處理原始資料
       const processedData = twseAPI.processDailyMarketInfo(marketInfoData);
       
@@ -165,6 +173,14 @@ async function checkAndUpdateMarketData() {
         const today = format(new Date(), 'yyyy-MM-dd');
         if (processedData.date !== today) {
           logger.info(`API返回的資料日期 ${processedData.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+          
+          // 檢查資料庫中是否已有這個日期的資料
+          const existingData = await MarketData.findOne({ date: processedData.date });
+          if (existingData) {
+            logger.info(`資料庫中已存在 ${processedData.date} 的資料，將進行更新`);
+          } else {
+            logger.info(`資料庫中不存在 ${processedData.date} 的資料，將創建新記錄`);
+          }
         }
         
         // 儲存到資料庫
@@ -200,6 +216,13 @@ async function checkAndUpdateFuturesMarketData() {
     const largeTradersFuturesData = await taifexAPI.getLargeTradersFutures();
     
     if (largeTradersFuturesData && largeTradersFuturesData.length > 0) {
+      // 記錄原始資料中的所有日期，用於診斷
+      if (largeTradersFuturesData.length > 1) {
+        // 抽取並標準化所有不同的日期
+        const uniqueDates = [...new Set(largeTradersFuturesData.map(item => taifexAPI.standardizeDate(item.Date)))];
+        logger.info(`期貨大額交易人API返回的所有不重複日期: ${uniqueDates.join(', ')}`);
+      }
+      
       // 處理原始資料
       const processedLargeTradersFutures = taifexAPI.processLargeTradersFutures(largeTradersFuturesData);
       
@@ -207,6 +230,14 @@ async function checkAndUpdateFuturesMarketData() {
         // 檢查資料日期是否為當日
         if (processedLargeTradersFutures.date !== today) {
           logger.info(`期貨大額交易人API返回的資料日期 ${processedLargeTradersFutures.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+          
+          // 檢查資料庫中是否已有這個日期的資料
+          const existingData = await FuturesMarketData.findOne({ date: processedLargeTradersFutures.date });
+          if (existingData) {
+            logger.info(`資料庫中已存在 ${processedLargeTradersFutures.date} 的期貨大額交易人資料，將進行更新`);
+          } else {
+            logger.info(`資料庫中不存在 ${processedLargeTradersFutures.date} 的期貨大額交易人資料，將創建新記錄`);
+          }
         }
         
         // 更新期貨市場資料
@@ -226,6 +257,15 @@ async function checkAndUpdateFuturesMarketData() {
     const pcrData = await taifexAPI.getPutCallRatio();
     
     if (pcrData && pcrData.length > 0) {
+      // 記錄原始資料中的所有日期，用於診斷
+      if (pcrData.length > 1) {
+        // 抽取並標準化所有不同的日期
+        const uniqueDates = [...new Set(pcrData.map(item => taifexAPI.standardizeDate(item.Date)))];
+        logger.info(`PCR比率API返回的所有不重複日期: ${uniqueDates.join(', ')}`);
+      } else {
+        logger.info(`PCR比率API返回的日期: ${taifexAPI.standardizeDate(pcrData[0].Date)}`);
+      }
+      
       // 處理原始資料
       const processedPCR = taifexAPI.processPutCallRatio(pcrData);
       
@@ -233,6 +273,14 @@ async function checkAndUpdateFuturesMarketData() {
         // 檢查資料日期是否為當日
         if (processedPCR.date !== today) {
           logger.info(`PCR比率API返回的資料日期 ${processedPCR.date} 不是當日 ${today}，可能是非交易日或資料尚未更新`);
+          
+          // 檢查資料庫中是否已有這個日期的資料
+          const existingData = await FuturesMarketData.findOne({ date: processedPCR.date });
+          if (existingData) {
+            logger.info(`資料庫中已存在 ${processedPCR.date} 的PCR比率資料，將進行更新`);
+          } else {
+            logger.info(`資料庫中不存在 ${processedPCR.date} 的PCR比率資料，將創建新記錄`);
+          }
         }
         
         // 更新期貨市場資料
