@@ -10,19 +10,22 @@ const { format, parse, isValid } = require('date-fns');
 // API 基礎 URL
 const BASE_URL = 'https://openapi.twse.com.tw/v1';
 
-// 標準請求頭
-const headers = {
-  'accept': 'application/json',
-  'If-Modified-Since': 'Mon, 26 Jul 1997 05:00:00 GMT',
-  'Cache-Control': 'no-cache',
-  'Pragma': 'no-cache'
-};
-
 // API 請求函數
 async function fetchAPI(endpoint) {
   try {
-    const url = `${BASE_URL}/${endpoint}`;
+    // 生成時間戳參數，確保每次請求都獲取最新資料而非快取
+    const timestamp = new Date().getTime();
+    const url = `${BASE_URL}/${endpoint}?_=${timestamp}`; 
     logger.debug(`正在請求 API: ${url}`);
+    
+    // 標準請求頭，強制禁用快取
+    const headers = {
+      'accept': 'application/json',
+      'If-Modified-Since': '0',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    };
     
     const response = await axios.get(url, { headers });
     
@@ -36,6 +39,15 @@ async function fetchAPI(endpoint) {
     const lastModified = response.headers['last-modified'];
     if (lastModified) {
       logger.debug(`API ${endpoint} 資料更新時間: ${lastModified}`);
+    }
+    
+    // 記錄返回的數據條數，增加診斷資訊
+    if (response.data && Array.isArray(response.data)) {
+      logger.debug(`API ${endpoint} 返回 ${response.data.length} 條數據`);
+      // 記錄第一條數據的日期，用於檢查是否為最新
+      if (response.data.length > 0 && response.data[0].Date) {
+        logger.info(`API ${endpoint} 返回的最新日期: ${response.data[0].Date}`);
+      }
     }
     
     return {
@@ -76,7 +88,19 @@ async function getDailyMarketInfo() {
  */
 async function checkDataUpdated(endpoint) {
   try {
-    const url = `${BASE_URL}/${endpoint}`;
+    // 添加時間戳參數，防止快取
+    const timestamp = new Date().getTime();
+    const url = `${BASE_URL}/${endpoint}?_=${timestamp}`;
+    
+    // 強制禁用快取的請求頭
+    const headers = {
+      'accept': 'application/json',
+      'If-Modified-Since': '0',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    };
+    
     const response = await axios.head(url, { headers });
     
     // 獲取 Last-Modified 頭
