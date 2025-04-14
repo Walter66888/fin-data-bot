@@ -298,7 +298,7 @@ module.exports = function(bot) {
   // 尋找市場資料（證交所）
   async function findMarketData(dateStr) {
     // 先直接查詢指定日期
-    const specificData = await MarketData.findOne({ date: dateStr });
+    let specificData = await MarketData.findOne({ date: dateStr });
     
     if (specificData) {
       return specificData;
@@ -312,25 +312,26 @@ module.exports = function(bot) {
         const scheduler = require('../scheduler/jobs');
         
         // 嘗試立即抓取資料
-        const fetchResult = await scheduler.checkAndUpdateMarketData();
+        await scheduler.checkAndUpdateMarketData();
         
-        if (fetchResult) {
-          // 如果成功抓取，再次查詢
-          return await MarketData.findOne({ date: dateStr });
+        // 再次嘗試查詢今天的資料
+        specificData = await MarketData.findOne({ date: dateStr });
+        if (specificData) {
+          return specificData;
         }
       } catch (error) {
         logger.error('立即抓取證交所資料時發生錯誤:', error);
       }
     }
     
-    // 如果仍然找不到，返回最新的一筆資料
+    // 無論如何，如果找不到指定日期的資料，都返回最新的一筆資料
     return await MarketData.getLatest();
   }
   
   // 尋找期貨市場資料（期交所）
   async function findFuturesData(dateStr) {
     // 先直接查詢指定日期
-    const specificData = await FuturesMarketData.findOne({ date: dateStr });
+    let specificData = await FuturesMarketData.findOne({ date: dateStr });
     
     if (specificData) {
       return specificData;
@@ -344,18 +345,19 @@ module.exports = function(bot) {
         const scheduler = require('../scheduler/jobs');
         
         // 嘗試立即抓取資料
-        const fetchResult = await scheduler.checkAndUpdateFuturesMarketData();
+        await scheduler.checkAndUpdateFuturesMarketData();
         
-        if (fetchResult) {
-          // 如果成功抓取，再次查詢
-          return await FuturesMarketData.findOne({ date: dateStr });
+        // 再次嘗試查詢今天的資料
+        specificData = await FuturesMarketData.findOne({ date: dateStr });
+        if (specificData) {
+          return specificData;
         }
       } catch (error) {
         logger.error('立即抓取期交所資料時發生錯誤:', error);
       }
     }
     
-    // 如果仍然找不到，返回最新的一筆資料
+    // 無論如何，如果找不到指定日期的資料，都返回最新的一筆資料
     return await FuturesMarketData.getLatest();
   }
 };
