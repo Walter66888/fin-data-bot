@@ -1,11 +1,11 @@
 /**
- * Line Notify 通知模組（更新版）
+ * Line Notify 通知模組
  * 用於發送 Line 通知到指定群組，支援整合資料
  */
 
 const axios = require('axios');
 const logger = require('../utils/logger');
-const messages = require('./updated-messages');
+const messages = require('./messages');
 const MarketData = require('../db/models/MarketData');
 const FuturesMarketData = require('../db/models/FuturesMarketData');
 
@@ -130,6 +130,50 @@ async function sendIntegratedUpdateNotification(date) {
 }
 
 /**
+ * 推送最新的市場資料到群組
+ * 用於定時推送或手動觸發
+ * 
+ * @returns {Promise<boolean>} 推送成功返回 true，否則返回 false
+ */
+async function pushLatestMarketData() {
+  try {
+    // 從資料庫獲取最新的市場資料
+    const latestData = await MarketData.getLatest();
+    
+    if (!latestData) {
+      logger.error('無法獲取最新市場資料，取消推送');
+      return false;
+    }
+    
+    // 檢查是否為當天的資料
+    const currentDate = new Date().toISOString().split('T')[0];
+    
+    // 避免同一天重複發送通知
+    if (lastNotifiedDate === latestData.date) {
+      logger.info(`今日 (${latestData.date}) 已經發送過通知，不再重複發送`);
+      return false;
+    }
+    
+    // 格式化完整的市場資料訊息
+    const message = messages.formatMarketDataMessage(latestData);
+    
+    // 發送通知
+    const success = await sendNotify(message);
+    
+    if (success) {
+      // 更新最後通知日期
+      lastNotifiedDate = latestData.date;
+      logger.info(`已推送 ${latestData.date} 的完整市場資料`);
+    }
+    
+    return success;
+  } catch (error) {
+    logger.error('推送最新市場資料時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
  * 推送最新的整合市場資料到群組
  * 用於定時推送或手動觸發
  * 
@@ -212,6 +256,7 @@ module.exports = {
   sendNotify,
   sendUpdateNotification,
   sendIntegratedUpdateNotification,
+  pushLatestMarketData,
   pushLatestIntegratedMarketData,
   sendAlertNotification
 };
