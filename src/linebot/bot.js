@@ -1,5 +1,5 @@
 /**
- * Line Bot 處理模組（更新版）
+ * Line Bot 處理模組
  * 負責處理 Line Bot 的訊息和事件，支援整合資料查詢
  */
 
@@ -8,7 +8,7 @@ const MarketData = require('../db/models/MarketData');
 const FuturesMarketData = require('../db/models/FuturesMarketData');
 const Holiday = require('../db/models/Holiday');
 const { format, parse, isValid } = require('date-fns');
-const messages = require('./updated-messages');
+const messages = require('./messages');
 
 // Line Bot 消息處理器
 module.exports = function(bot) {
@@ -309,7 +309,7 @@ module.exports = function(bot) {
     if (dateStr === today) {
       try {
         // 引入排程模組
-        const scheduler = require('../scheduler/updated-jobs');
+        const scheduler = require('../scheduler/jobs');
         
         // 嘗試立即抓取資料
         const fetchResult = await scheduler.checkAndUpdateMarketData();
@@ -341,7 +341,7 @@ module.exports = function(bot) {
     if (dateStr === today) {
       try {
         // 引入排程模組
-        const scheduler = require('../scheduler/updated-jobs');
+        const scheduler = require('../scheduler/jobs');
         
         // 嘗試立即抓取資料
         const fetchResult = await scheduler.checkAndUpdateFuturesMarketData();
