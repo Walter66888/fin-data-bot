@@ -119,6 +119,44 @@ async function getPutCallRatio() {
 }
 
 /**
+ * 標準化日期格式（將可能的各種格式轉換為YYYY-MM-DD）
+ * 
+ * @param {string} dateStr 原始日期字串
+ * @returns {string} 標準化的日期字串 (YYYY-MM-DD)
+ */
+function standardizeDate(dateStr) {
+  if (!dateStr) return '';
+  
+  // 移除可能的非數字字符（例如斜線）
+  dateStr = dateStr.replace(/\D/g, '');
+  
+  // 檢查是否為中華民國年份格式（例如 1140401）
+  if (dateStr.length === 7) {
+    const rocYear = parseInt(dateStr.substring(0, 3), 10);
+    const month = dateStr.substring(3, 5);
+    const day = dateStr.substring(5, 7);
+    const westernYear = rocYear + 1911;
+    return `${westernYear}-${month}-${day}`;
+  }
+  
+  // 檢查是否為西元年份格式（例如 20250401）
+  if (dateStr.length === 8) {
+    const year = dateStr.substring(0, 4);
+    const month = dateStr.substring(4, 6);
+    const day = dateStr.substring(6, 8);
+    return `${year}-${month}-${day}`;
+  }
+  
+  // 原始格式可能已經是 YYYY-MM-DD
+  if (dateStr.includes('-') && dateStr.length === 10) {
+    return dateStr;
+  }
+  
+  // 如果無法識別，返回原始字串
+  return dateStr;
+}
+
+/**
  * 處理大額交易人期貨資料
  * 將原始資料轉換為更易使用的格式
  * 
@@ -151,8 +189,11 @@ function processLargeTradersFutures(data) {
       }
     }
     
+    // 標準化日期格式
+    latestDate = standardizeDate(latestDate);
+    
     // 過濾出最新日期的台指期近月資料
-    const latestTxfData = txfData.filter(item => item.Date === latestDate);
+    const latestTxfData = txfData.filter(item => standardizeDate(item.Date) === latestDate);
     
     // 處理不同交易人類別的資料
     const result = {
@@ -194,9 +235,12 @@ function processPutCallRatio(data) {
     // 通常取最新的一筆資料（第一筆）
     const latestData = data[0];
     
+    // 標準化日期格式
+    const standardizedDate = standardizeDate(latestData.Date);
+    
     // 轉換為數字型別
     const result = {
-      date: latestData.Date,
+      date: standardizedDate,
       pcRatio: {
         putVolume: parseInt(latestData.PutVolume.replace(/,/g, ''), 10) || 0,
         callVolume: parseInt(latestData.CallVolume.replace(/,/g, ''), 10) || 0,
@@ -221,5 +265,6 @@ module.exports = {
   getPutCallRatio,
   checkDataUpdated,
   processLargeTradersFutures,
-  processPutCallRatio
+  processPutCallRatio,
+  standardizeDate
 };
