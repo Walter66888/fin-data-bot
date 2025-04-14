@@ -5,6 +5,7 @@
 
 const MarketData = require('../db/models/MarketData');
 const FuturesMarketData = require('../db/models/FuturesMarketData');
+const logger = require('../utils/logger');
 
 /**
  * 格式化市場資料訊息
@@ -55,7 +56,7 @@ function formatMarketDataMessage(marketData) {
     
     return message;
   } catch (error) {
-    console.error('格式化市場資料訊息時發生錯誤:', error);
+    logger.error('格式化市場資料訊息時發生錯誤:', error);
     return '格式化資料時發生錯誤，請聯繫管理員。';
   }
 }
@@ -92,7 +93,7 @@ function formatUpdateNotification(marketData) {
     
     return message;
   } catch (error) {
-    console.error('格式化更新通知訊息時發生錯誤:', error);
+    logger.error('格式化更新通知訊息時發生錯誤:', error);
     return '市場資料已更新，輸入「盤後資料」查看詳情。';
   }
 }
@@ -105,18 +106,39 @@ function formatUpdateNotification(marketData) {
  */
 async function formatIntegratedMarketDataMessage(date) {
   try {
-    // 獲取該日期的證交所資料
-    const marketData = await MarketData.findOne({ date });
-    
-    // 獲取該日期的期交所資料
-    const futuresData = await FuturesMarketData.findOne({ date });
-    
-    if (!marketData && !futuresData) {
-      return `無法獲取 ${date} 的市場資料`;
+    // 獲取該日期的證交所資料，如果沒有則取最近的
+    let marketData = await MarketData.findOne({ date });
+    if (!marketData) {
+      marketData = await MarketData.findOne({ date: { $lt: date } }).sort({ date: -1 }).limit(1);
     }
     
+    // 獲取該日期的期交所資料，如果沒有則取最近的
+    let futuresData = await FuturesMarketData.findOne({ date });
+    if (!futuresData) {
+      futuresData = await FuturesMarketData.findOne({ date: { $lt: date } }).sort({ date: -1 }).limit(1);
+    }
+    
+    if (!marketData && !futuresData) {
+      return `無法獲取 ${date} 或之前的市場資料`;
+    }
+    
+    // 記錄實際資料日期
+    const marketDataDate = marketData ? marketData.date : '無資料';
+    const futuresDataDate = futuresData ? futuresData.date : '無資料';
+    
     // 構建訊息文字
-    let message = `📊 台股盤後資料整合分析 (${date}) 📊\n\n`;
+    let message = `📊 台股盤後資料整合分析 📊\n`;
+    
+    // 如果實際資料日期與查詢日期不同，提示用戶
+    if (marketDataDate !== date || futuresDataDate !== date) {
+      message += `⚠️ 注意：顯示的是不同日期的資料\n`;
+      if (marketData) message += `證交所資料日期: ${marketDataDate}\n`;
+      if (futuresData) message += `期交所資料日期: ${futuresDataDate}\n`;
+    } else {
+      message += `日期: ${date}\n`;
+    }
+    
+    message += `\n`;
     
     // 加權指數部分 (來自證交所資料)
     if (marketData && marketData.taiex) {
@@ -129,7 +151,7 @@ async function formatIntegratedMarketDataMessage(date) {
         ? `(${taiex.changePercent >= 0 ? '+' : ''}${taiex.changePercent.toFixed(2)}%)`
         : '';
       
-      message += `加權指數: ${taiex.index.toLocaleString('zh-TW')} `;
+      message += `加權指數[${marketDataDate}]: ${taiex.index.toLocaleString('zh-TW')} `;
       message += `${taiexChangeSymbol}${taiexChangeAbs} ${taiexChangePercentFormatted}`;
       
       if (market && market.tradeValue) {
@@ -137,6 +159,8 @@ async function formatIntegratedMarketDataMessage(date) {
       }
       
       message += '\n';
+    } else {
+      message += `加權指數資料: 暫無可用資料\n`;
     }
     
     // 台指期部分 (來自期交所資料)
@@ -151,7 +175,7 @@ async function formatIntegratedMarketDataMessage(date) {
           ? `(${txf.changePercent >= 0 ? '+' : ''}${txf.changePercent.toFixed(2)}%)`
           : '';
         
-        message += `台指期(近): ${txf.price.toLocaleString('zh-TW')} `;
+        message += `台指期(近)[${futuresDataDate}]: ${txf.price.toLocaleString('zh-TW')} `;
         message += `${txfChangeSymbol}${txfChangeAbs} ${txfChangePercentFormatted}`;
         
         // 若有基差資料
@@ -165,15 +189,17 @@ async function formatIntegratedMarketDataMessage(date) {
       // 增加十大交易人資料
       if (txf.top10NetOI !== undefined) {
         const changeSymbol = txf.top10NetOI >= 0 ? '+' : '';
-        message += `十大交易人: ${changeSymbol}${txf.top10NetOI.toLocaleString('zh-TW')} (未平倉)\n`;
+        message += `十大交易人[${futuresDataDate}]: ${changeSymbol}${txf.top10NetOI.toLocaleString('zh-TW')} (未平倉)\n`;
       }
+    } else {
+      message += `台指期資料: 暫無可用資料\n`;
     }
     
     // 三大法人資料 (可能來自任一或兩者整合)
     if (futuresData && futuresData.institutionalInvestors) {
       const { institutionalInvestors } = futuresData;
       
-      message += '\n🏢 三大法人現貨買賣超(億元)';
+      message += `\n🏢 三大法人現貨買賣超(億元)[${futuresDataDate}]`;
       
       if (institutionalInvestors.totalNetBuySell !== undefined) {
         const changeSymbol = institutionalInvestors.totalNetBuySell >= 0 ? '+' : '';
@@ -213,6 +239,8 @@ async function formatIntegratedMarketDataMessage(date) {
           message += `避險: ${dealerHedgeChangeSymbol}${dealer.netBuySellHedge.toFixed(2)}\n`;
         }
       }
+    } else {
+      message += `\n三大法人資料: 暫無可用資料\n`;
     }
     
     // 外資及大額交易人期貨資料
@@ -220,7 +248,7 @@ async function formatIntegratedMarketDataMessage(date) {
       const { foreign } = futuresData.institutionalInvestors;
       
       if (foreign.txfOI !== undefined || foreign.mtxOI !== undefined || foreign.txfChange !== undefined || foreign.mtxChange !== undefined) {
-        message += '\n📈 外資及大額交易人期貨(口) 未平倉 全日盤增減\n';
+        message += `\n📈 外資及大額交易人期貨(口)[${futuresDataDate}] 未平倉 全日盤增減\n`;
         
         if (foreign.txfOI !== undefined) {
           const txfOIString = foreign.txfOI.toLocaleString('zh-TW');
@@ -250,7 +278,7 @@ async function formatIntegratedMarketDataMessage(date) {
         const previousValue = futuresData.previousPutCallRatio ? futuresData.previousPutCallRatio.oiRatio : null;
         const previousString = previousValue !== null ? `/${previousValue.toFixed(0)}` : '';
         
-        message += `\nPCratio 未平倉比: ${putCallRatio.oiRatio.toFixed(0)}${previousString}\n`;
+        message += `\nPCratio 未平倉比[${futuresDataDate}]: ${putCallRatio.oiRatio.toFixed(0)}${previousString}\n`;
       }
     }
     
@@ -260,14 +288,14 @@ async function formatIntegratedMarketDataMessage(date) {
         ? `/${futuresData.previousVix.toFixed(2)}` 
         : '';
       
-      message += `VIX 指標: ${futuresData.vix.toFixed(2)}${previousVix}\n`;
+      message += `VIX 指標[${futuresDataDate}]: ${futuresData.vix.toFixed(2)}${previousVix}\n`;
     }
     
     // 散戶指標
     if (futuresData && futuresData.retailIndicators) {
       const { retailIndicators } = futuresData;
       
-      message += '\n📊 散戶指標\n';
+      message += `\n📊 散戶指標[${futuresDataDate}]\n`;
       
       if (retailIndicators.mtx !== undefined) {
         const mtxChangeString = retailIndicators.mtxChange !== undefined 
@@ -287,15 +315,15 @@ async function formatIntegratedMarketDataMessage(date) {
     }
     
     // 更新時間
-    const lastUpdated = marketData 
-      ? marketData.lastUpdated 
-      : (futuresData ? futuresData.lastUpdated : new Date());
+    const lastUpdated = (marketData && futuresData) 
+      ? (marketData.lastUpdated > futuresData.lastUpdated ? marketData.lastUpdated : futuresData.lastUpdated)
+      : (marketData ? marketData.lastUpdated : (futuresData ? futuresData.lastUpdated : new Date()));
     
     message += `\n資料更新時間: ${new Date(lastUpdated).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
     
     return message;
   } catch (error) {
-    console.error('格式化整合市場資料訊息時發生錯誤:', error);
+    logger.error('格式化整合市場資料訊息時發生錯誤:', error);
     return '格式化整合資料時發生錯誤，請聯繫管理員。';
   }
 }
@@ -308,19 +336,37 @@ async function formatIntegratedMarketDataMessage(date) {
  */
 async function formatIntegratedUpdateNotification(date) {
   try {
-    // 獲取該日期的證交所資料
-    const marketData = await MarketData.findOne({ date });
+    // 獲取該日期的證交所資料，如果沒有則取最近的
+    let marketData = await MarketData.findOne({ date });
+    if (!marketData) {
+      marketData = await MarketData.findOne().sort({ date: -1 }).limit(1);
+    }
     
-    // 獲取該日期的期交所資料
-    const futuresData = await FuturesMarketData.findOne({ date });
+    // 獲取該日期的期交所資料，如果沒有則取最近的
+    let futuresData = await FuturesMarketData.findOne({ date });
+    if (!futuresData) {
+      futuresData = await FuturesMarketData.findOne().sort({ date: -1 }).limit(1);
+    }
     
     if (!marketData && !futuresData) {
       return `無法獲取 ${date} 的市場資料更新`;
     }
     
+    // 記錄實際資料日期
+    const marketDataDate = marketData ? marketData.date : '無資料';
+    const futuresDataDate = futuresData ? futuresData.date : '無資料';
+    
     // 構建訊息文字
     let message = `🔔 盤後資料更新通知 🔔\n\n`;
-    message += `${date} 台股盤後資料已更新\n`;
+    
+    // 如果實際資料日期與查詢日期不同，提示用戶
+    if (marketDataDate !== date || futuresDataDate !== date) {
+      message += `可用的最新資料:\n`;
+      if (marketData) message += `證交所資料日期: ${marketDataDate}\n`;
+      if (futuresData) message += `期交所資料日期: ${futuresDataDate}\n\n`;
+    } else {
+      message += `${date} 台股盤後資料已更新\n\n`;
+    }
     
     // 加權指數部分 (來自證交所資料)
     if (marketData && marketData.taiex) {
@@ -333,7 +379,7 @@ async function formatIntegratedUpdateNotification(date) {
         ? `(${taiex.changePercent >= 0 ? '+' : ''}${taiex.changePercent.toFixed(2)}%)`
         : '';
       
-      message += `加權指數: ${taiex.index.toLocaleString('zh-TW')} `;
+      message += `加權指數[${marketDataDate}]: ${taiex.index.toLocaleString('zh-TW')} `;
       message += `${taiexChangeSymbol}${taiexChangeAbs} ${taiexChangePercentFormatted}\n`;
     }
     
@@ -348,7 +394,7 @@ async function formatIntegratedUpdateNotification(date) {
         ? `(${txf.changePercent >= 0 ? '+' : ''}${txf.changePercent.toFixed(2)}%)`
         : '';
       
-      message += `台指期(近): ${txf.price.toLocaleString('zh-TW')} `;
+      message += `台指期(近)[${futuresDataDate}]: ${txf.price.toLocaleString('zh-TW')} `;
       message += `${txfChangeSymbol}${txfChangeAbs} ${txfChangePercentFormatted}\n`;
     }
     
@@ -357,14 +403,14 @@ async function formatIntegratedUpdateNotification(date) {
       const { totalNetBuySell } = futuresData.institutionalInvestors;
       const changeSymbol = totalNetBuySell >= 0 ? '+' : '';
       
-      message += `三大法人買賣超: ${changeSymbol}${totalNetBuySell.toFixed(2)} 億元\n`;
+      message += `三大法人買賣超[${futuresDataDate}]: ${changeSymbol}${totalNetBuySell.toFixed(2)} 億元\n`;
     }
     
     message += `\n輸入「整合資料」查看完整資訊`;
     
     return message;
   } catch (error) {
-    console.error('格式化整合更新通知訊息時發生錯誤:', error);
+    logger.error('格式化整合更新通知訊息時發生錯誤:', error);
     return '市場資料已更新，輸入「整合資料」查看詳情。';
   }
 }
