@@ -1,7 +1,7 @@
 /**
  * 期交所爬蟲資料導入 MongoDB 腳本
  * 讀取 Python 爬蟲生成的 JSON 資料並導入資料庫
- * 增強版：添加更多日誌記錄，方便在 GitHub Actions 中查看執行結果
+ * 支援多種期交所資料，包括 PC Ratio 和三大法人期貨淨部位
  */
 
 require('dotenv').config();
@@ -10,6 +10,30 @@ const path = require('path');
 const mongoose = require('mongoose');
 const { format } = require('date-fns');
 const logger = require('./src/utils/logger');
+
+// 解析命令行參數
+const args = process.argv.slice(2);
+let dataType = 'pcRatio'; // 默認處理 PC Ratio 資料
+let specificFile = null; // 指定的文件路徑
+
+// 查找 --type 參數和 --file 參數
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--type' || args[i] === '-t') {
+    if (i + 1 < args.length) {
+      dataType = args[i + 1];
+    }
+  } else if (args[i].startsWith('--type=')) {
+    dataType = args[i].split('=')[1];
+  } else if (args[i] === '--file' || args[i] === '-f') {
+    if (i + 1 < args.length) {
+      specificFile = args[i + 1];
+    }
+  } else if (args[i].startsWith('--file=')) {
+    specificFile = args[i].split('=')[1];
+  }
+}
+
+logger.info(`準備處理資料類型: ${dataType}${specificFile ? `, 指定文件: ${specificFile}` : ''}`);
 
 // 連接 MongoDB
 async function connectDB() {
@@ -38,6 +62,7 @@ const FuturesMarketData = require('./src/db/models/FuturesMarketData');
 
 /**
  * 標準化日期格式（將可能的各種格式轉換為YYYY-MM-DD）
+ * 參考自 taifex.js 中的 standardizeDate 方法
  * 
  * @param {string} dateStr 原始日期字串
  * @returns {string} 標準化的日期字串 (YYYY-MM-DD)
@@ -60,6 +85,40 @@ function standardizeDate(dateStr) {
     }
   }
   
+  // 處理中華民國年份格式（如：112/04/15）
+  const rocPattern = /^(\d{2,3})\/(\d{1,2})\/(\d{1,2})$/;
+  const rocMatch = dateStr.match(rocPattern);
+  if (rocMatch) {
+    const rocYear = parseInt(rocMatch[1], 10);
+    if (rocYear < 200) { // 判斷是否為民國年
+      const westernYear = rocYear + 1911;
+      const month = rocMatch[2].padStart(2, '0');
+      const day = rocMatch[3].padStart(2, '0');
+      return `${westernYear}-${month}-${day}`;
+    }
+  }
+  
+  // 處理純數字日期格式（如：1140415）
+  const numericPattern = /^(\d{3})(\d{2})(\d{2})$/;
+  const numericMatch = dateStr.match(numericPattern);
+  if (numericMatch) {
+    const rocYear = parseInt(numericMatch[1], 10);
+    const westernYear = rocYear + 1911;
+    const month = numericMatch[2];
+    const day = numericMatch[3];
+    return `${westernYear}-${month}-${day}`;
+  }
+  
+  // 處理西元年純數字日期格式（如：20230415）
+  const westernPattern = /^(\d{4})(\d{2})(\d{2})$/;
+  const westernMatch = dateStr.match(westernPattern);
+  if (westernMatch) {
+    const year = westernMatch[1];
+    const month = westernMatch[2];
+    const day = westernMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+  
   // 如果所有嘗試都失敗，記錄警告並返回原始字串
   logger.warn(`無法標準化日期格式: ${dateStr}`);
   return dateStr;
@@ -68,6 +127,7 @@ function standardizeDate(dateStr) {
 /**
  * 處理 PCR 比率資料
  * 將原始資料轉換為更易使用的格式
+ * 參考自 taifexScraper.fetchTxoPutCallRatio 方法的結果格式
  * 
  * @param {Array} data 原始 API 資料
  * @returns {Object|null} 處理後的資料，如果轉換失敗則返回 null
@@ -114,6 +174,134 @@ function processPutCallRatio(data) {
 }
 
 /**
+ * 處理三大法人期貨淨部位資料
+ * 將原始資料轉換為更易使用的格式
+ * 參考自 taifexScraper.fetchFuturesInstitutional 方法的結果格式
+ * 
+ * @param {Array} data 原始 API 資料
+ * @returns {Object|null} 處理後的資料，如果轉換失敗則返回 null
+ */
+function processInstitutionalData(data) {
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    logger.error('處理三大法人期貨淨部位資料時收到無效資料');
+    return null;
+  }
+  
+  try {
+    // 找出最新日期
+    let latestDate = '';
+    for (const item of data) {
+      if (item.Date && item.Date > latestDate) {
+        latestDate = item.Date;
+      }
+    }
+    
+    // 篩選最新日期的資料
+    const latestData = data.filter(item => item.Date === latestDate);
+    
+    if (latestData.length === 0) {
+      logger.error('無法找到最新日期的資料');
+      return null;
+    }
+    
+    // 標準化日期格式
+    const standardizedDate = standardizeDate(latestDate);
+    logger.info(`標準化後的日期: ${standardizedDate}`);
+    
+    // 初始化結果物件，模仿 taifexScraper.fetchFuturesInstitutional 的返回格式
+    const result = {
+      date: standardizedDate,
+      institutionalInvestors: {
+        foreign: {},
+        investment: {},
+        dealer: {}
+      }
+    };
+    
+    // 處理各類投資人資料
+    for (const item of latestData) {
+      if (!item.InvestorType) continue;
+      
+      // 根據投資人類型分類處理
+      switch (item.InvestorType) {
+        case '外資及陸資':
+          // 轉換為數值並處理千分位逗號
+          const netTradeValue = parseFloat(String(item.NetTradeValue).replace(/,/g, '')) || 0;
+          const netOIVolume = parseInt(String(item.NetOIVolume).replace(/,/g, '')) || 0;
+          
+          result.institutionalInvestors.foreign = {
+            netBuySell: netTradeValue / 100000 || 0, // 轉換為億元
+            netOI: netOIVolume
+          };
+          
+          // 如果是台指期，記錄額外資訊
+          if (item.ContractName === '臺股期貨') {
+            result.institutionalInvestors.foreign.txfOI = netOIVolume;
+            
+            // 若有 NetTradeVolume，也記錄為 txfChange
+            const netTradeVolume = parseInt(String(item.NetTradeVolume).replace(/,/g, '')) || 0;
+            result.institutionalInvestors.foreign.txfChange = netTradeVolume;
+          }
+          break;
+          
+        case '投信':
+          const investmentNetTradeValue = parseFloat(String(item.NetTradeValue).replace(/,/g, '')) || 0;
+          result.institutionalInvestors.investment = {
+            netBuySell: investmentNetTradeValue / 100000 || 0 // 轉換為億元
+          };
+          break;
+          
+        case '自營商':
+          const dealerNetTradeValue = parseFloat(String(item.NetTradeValue).replace(/,/g, '')) || 0;
+          result.institutionalInvestors.dealer.netBuySellTotal = dealerNetTradeValue / 100000 || 0; // 轉換為億元
+          break;
+          
+        case '自營商(自行買賣)':
+          const selfNetTradeValue = parseFloat(String(item.NetTradeValue).replace(/,/g, '')) || 0;
+          result.institutionalInvestors.dealer.netBuySellSelf = selfNetTradeValue / 100000 || 0; // 轉換為億元
+          break;
+          
+        case '自營商(避險)':
+          const hedgeNetTradeValue = parseFloat(String(item.NetTradeValue).replace(/,/g, '')) || 0;
+          result.institutionalInvestors.dealer.netBuySellHedge = hedgeNetTradeValue / 100000 || 0; // 轉換為億元
+          break;
+      }
+    }
+    
+    // 計算三大法人合計買賣超
+    result.institutionalInvestors.totalNetBuySell = 
+      (result.institutionalInvestors.foreign.netBuySell || 0) +
+      (result.institutionalInvestors.investment.netBuySell || 0) +
+      (result.institutionalInvestors.dealer.netBuySellTotal || 0);
+    
+    // 檢查資料完整性
+    if (Object.keys(result.institutionalInvestors.foreign).length === 0 && 
+        Object.keys(result.institutionalInvestors.investment).length === 0 &&
+        Object.keys(result.institutionalInvestors.dealer).length === 0) {
+      logger.warn('三大法人資料可能不完整，請檢查原始資料');
+    } else {
+      // 輸出資料摘要
+      logger.info(`處理資料日期: ${standardizedDate}`);
+      logger.info(`三大法人合計買賣超: ${result.institutionalInvestors.totalNetBuySell.toFixed(2)} 億元`);
+      if (result.institutionalInvestors.foreign.netBuySell !== undefined) {
+        logger.info(`外資買賣超: ${result.institutionalInvestors.foreign.netBuySell.toFixed(2)} 億元`);
+      }
+      if (result.institutionalInvestors.investment.netBuySell !== undefined) {
+        logger.info(`投信買賣超: ${result.institutionalInvestors.investment.netBuySell.toFixed(2)} 億元`);
+      }
+      if (result.institutionalInvestors.dealer.netBuySellTotal !== undefined) {
+        logger.info(`自營商買賣超: ${result.institutionalInvestors.dealer.netBuySellTotal.toFixed(2)} 億元`);
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    logger.error('處理三大法人期貨淨部位資料時發生錯誤:', error);
+    return null;
+  }
+}
+
+/**
  * 更新期貨市場資料到資料庫
  * 
  * @param {Object} processedData 處理後的資料
@@ -143,6 +331,15 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
           callOI: processedData.pcRatio.callOI,
           oiRatio: processedData.pcRatio.oiRatio
         };
+        
+        logger.info('已更新 PCR 比率資料');
+      }
+      
+      // 更新三大法人資料
+      if (processedData.institutionalInvestors) {
+        futuresData.institutionalInvestors = processedData.institutionalInvestors;
+        
+        logger.info('已更新三大法人資料');
       }
       
       // 更新資料來源狀態
@@ -156,6 +353,16 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
         
         if (!futuresData.rawData) futuresData.rawData = {};
         futuresData.rawData.putCallRatio = rawDataObj.putCallRatio;
+      }
+      
+      if (rawDataObj.institutional) {
+        futuresData.dataSources.institutional = {
+          updated: true,
+          updateTime: new Date()
+        };
+        
+        if (!futuresData.rawData) futuresData.rawData = {};
+        futuresData.rawData.institutional = rawDataObj.institutional;
       }
       
       futuresData.lastUpdated = new Date();
@@ -186,6 +393,11 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
         };
       }
       
+      // 設置三大法人資料
+      if (processedData.institutionalInvestors) {
+        newFuturesData.institutionalInvestors = processedData.institutionalInvestors;
+      }
+      
       // 設置資料來源狀態
       if (rawDataObj.putCallRatio) {
         newFuturesData.dataSources.putCallRatio = {
@@ -193,6 +405,14 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
           updateTime: new Date()
         };
         newFuturesData.rawData.putCallRatio = rawDataObj.putCallRatio;
+      }
+      
+      if (rawDataObj.institutional) {
+        newFuturesData.dataSources.institutional = {
+          updated: true,
+          updateTime: new Date()
+        };
+        newFuturesData.rawData.institutional = rawDataObj.institutional;
       }
       
       futuresData = new FuturesMarketData(newFuturesData);
@@ -206,13 +426,13 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
 }
 
 /**
- * 主要導入函數
+ * 導入 PC Ratio 資料
  * 
  * @param {string} filePath JSON 檔案路徑
  */
-async function importData(filePath) {
+async function importPCRatioData(filePath) {
   try {
-    logger.info(`開始從 ${filePath} 導入數據...`);
+    logger.info(`開始從 ${filePath} 導入 PC Ratio 數據...`);
     
     // 讀取 JSON 檔案
     const jsonData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -255,26 +475,110 @@ async function importData(filePath) {
       return false;
     }
   } catch (error) {
-    logger.error('導入數據時發生錯誤:', error);
+    logger.error('導入 PC Ratio 數據時發生錯誤:', error);
+    return false;
+  }
+}
+
+/**
+ * 導入三大法人期貨淨部位資料
+ * 
+ * @param {string} filePath JSON 檔案路徑
+ */
+async function importInstitutionalData(filePath) {
+  try {
+    logger.info(`開始從 ${filePath} 導入三大法人期貨淨部位數據...`);
+    
+    // 讀取 JSON 檔案
+    const jsonData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    
+    if (!jsonData || !Array.isArray(jsonData) || jsonData.length === 0) {
+      logger.error('JSON 資料無效或為空');
+      return false;
+    }
+    
+    // 輸出 JSON 資料的基本資訊
+    logger.info(`JSON 資料包含 ${jsonData.length} 筆記錄`);
+    
+    // 處理三大法人期貨淨部位資料
+    const processedData = processInstitutionalData(jsonData);
+    
+    if (processedData) {
+      // 更新資料到資料庫
+      await updateFuturesMarketData(processedData, {
+        institutional: jsonData
+      });
+      
+      logger.info(`成功導入 ${processedData.date} 的三大法人期貨淨部位資料`);
+      
+      // 輸出導入後的摘要
+      const latestFuturesData = await FuturesMarketData.findOne({ 
+        date: processedData.date 
+      });
+      
+      if (latestFuturesData && latestFuturesData.institutionalInvestors) {
+        logger.info('MongoDB 中的資料摘要:');
+        logger.info(`日期: ${latestFuturesData.date}`);
+        
+        const investors = latestFuturesData.institutionalInvestors;
+        if (investors.totalNetBuySell !== undefined) {
+          logger.info(`三大法人合計買賣超: ${investors.totalNetBuySell.toFixed(2)} 億元`);
+        }
+        
+        if (investors.foreign && investors.foreign.netBuySell !== undefined) {
+          logger.info(`外資買賣超: ${investors.foreign.netBuySell.toFixed(2)} 億元`);
+        }
+        
+        logger.info(`最後更新時間: ${latestFuturesData.lastUpdated}`);
+      }
+      
+      return true;
+    } else {
+      logger.error('處理三大法人期貨淨部位資料失敗');
+      return false;
+    }
+  } catch (error) {
+    logger.error('導入三大法人期貨淨部位數據時發生錯誤:', error);
     return false;
   }
 }
 
 /**
  * 檢查並導入資料
- * 檢查資料庫是否為空或資料過期，決定是否需要執行爬蟲
+ * 根據指定的資料類型，從對應的 JSON 文件導入資料到 MongoDB
  */
 async function checkAndImportData() {
   try {
-    // 檢查爬蟲資料文件是否存在
-    const filePath = path.join(__dirname, 'data', 'pc_ratio_latest.json');
-    if (!fs.existsSync(filePath)) {
-      logger.error(`找不到爬蟲資料文件: ${filePath}`);
-      return false;
+    let success = false;
+    
+    // 根據資料類型處理不同的資料
+    switch (dataType) {
+      case 'pcRatio':
+        // 處理 PC Ratio 資料
+        const pcRatioFilePath = specificFile || path.join(__dirname, 'data', 'pc_ratio_latest.json');
+        if (!fs.existsSync(pcRatioFilePath)) {
+          logger.error(`找不到爬蟲資料文件: ${pcRatioFilePath}`);
+          return false;
+        }
+        success = await importPCRatioData(pcRatioFilePath);
+        break;
+        
+      case 'institutional':
+        // 處理三大法人期貨淨部位資料
+        const institutionalFilePath = specificFile || path.join(__dirname, 'data', 'institutional_latest.json');
+        if (!fs.existsSync(institutionalFilePath)) {
+          logger.error(`找不到爬蟲資料文件: ${institutionalFilePath}`);
+          return false;
+        }
+        success = await importInstitutionalData(institutionalFilePath);
+        break;
+        
+      default:
+        logger.error(`未知的資料類型: ${dataType}`);
+        return false;
     }
     
-    // 導入資料
-    return await importData(filePath);
+    return success;
   } catch (error) {
     logger.error('檢查並導入資料時發生錯誤:', error);
     return false;
@@ -289,6 +593,7 @@ async function main() {
     // 輸出環境資訊
     logger.info(`執行環境: ${process.env.NODE_ENV || 'development'}`);
     logger.info(`執行時間: ${new Date().toISOString()}`);
+    logger.info(`處理資料類型: ${dataType}`);
     
     // 連接資料庫
     await connectDB();
@@ -297,9 +602,9 @@ async function main() {
     const success = await checkAndImportData();
     
     if (success) {
-      logger.info('資料導入成功完成');
+      logger.info(`${dataType} 資料導入成功完成`);
     } else {
-      logger.error('資料導入失敗');
+      logger.error(`${dataType} 資料導入失敗`);
     }
     
     // 關閉資料庫連接
@@ -309,11 +614,11 @@ async function main() {
     // 添加一個明確的成功/失敗訊息，方便在 GitHub Actions 日誌中查看
     if (success) {
       console.log('=============================');
-      console.log('✅ 爬蟲資料已成功導入 MongoDB');
+      console.log(`✅ ${dataType} 爬蟲資料已成功導入 MongoDB`);
       console.log('=============================');
     } else {
       console.log('=============================');
-      console.log('❌ 爬蟲資料導入 MongoDB 失敗');
+      console.log(`❌ ${dataType} 爬蟲資料導入 MongoDB 失敗`);
       console.log('=============================');
     }
     
