@@ -1,9 +1,9 @@
-name: TAIFEX Data Crawler
+name: TAIFEX 資料爬蟲
 
 on:
   schedule:
-    # 每個交易日下午 3:00 執行 (UTC+8 = UTC 07:00)
-    - cron: '0 7 * * 1-5'
+    # 每個交易日下午 3:05 執行 (UTC+8 = UTC 07:05)
+    - cron: '5 7 * * 1-5'
   # 允許手動觸發
   workflow_dispatch:
 
@@ -12,36 +12,39 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
+      - name: 檢出程式碼
         uses: actions/checkout@v3
       
-      - name: Set up Python
+      - name: 設定 Python 環境
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
       
-      - name: Install Python dependencies
+      - name: 安裝 Python 依賴套件
         run: |
           python -m pip install --upgrade pip
           pip install pandas lxml requests
       
-      - name: Crawl TAIFEX PC Ratio Data
+      - name: 建立資料目錄
+        run: mkdir -p data
+      
+      - name: 爬取期交所 PC Ratio 資料
         run: python taifex_pc_ratio_crawler.py
       
-      - name: Set up Node.js
+      - name: 設定 Node.js 環境
         uses: actions/setup-node@v3
         with:
           node-version: '16'
       
-      - name: Install Node.js dependencies
+      - name: 安裝 Node.js 依賴套件
         run: npm install
       
-      - name: Import data to MongoDB
+      - name: 將資料導入 MongoDB
         run: node import_taifex_data.js
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
       
-      - name: Upload JSON artifacts
+      - name: 上傳 JSON 文件
         uses: actions/upload-artifact@v3
         with:
           name: taifex-data
