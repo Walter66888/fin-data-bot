@@ -23,17 +23,53 @@ jobs:
       - name: 安裝 Python 依賴套件
         run: |
           python -m pip install --upgrade pip
-          pip install pandas lxml requests pymongo
+          pip install pandas lxml requests pymongo html5lib
 
-      - name: 爬取資料並保存到暫存目錄
-        run: python taifex_pc_ratio_crawler.py
+      - name: 建立資料目錄
+        run: mkdir -p data
       
-      - name: 顯示爬取結果摘要
+      - name: 爬取 PC Ratio 資料
+        id: pc-ratio
         run: |
-          echo "===== 爬取結果摘要 ====="
-          ls -la data/
-          echo "===== 資料預覽（前 20 行）====="
-          head -n 20 data/pc_ratio_latest.json || echo "找不到最新資料文件"
+          echo "開始爬取 PC Ratio 資料..."
+          python taifex_pc_ratio_crawler.py
+          echo "PC Ratio 資料爬取完成"
+      
+      - name: 爬取三大法人期貨淨部位資料
+        id: institutional
+        run: |
+          echo "開始爬取三大法人期貨淨部位資料..."
+          python taifex_institutional_crawler.py
+          echo "三大法人期貨淨部位資料爬取完成"
+          
+      - name: 生成摘要報告
+        run: |
+          echo "### 爬取結果摘要" > summary.md
+          echo "執行時間: $(date)" >> summary.md
+          echo "#### PC Ratio 資料" >> summary.md
+          if [ -f data/pc_ratio_latest.json ]; then
+            echo "\`\`\`json" >> summary.md
+            head -n 20 data/pc_ratio_latest.json >> summary.md
+            echo "\`\`\`" >> summary.md
+          else
+            echo "找不到 PC Ratio 資料" >> summary.md
+          fi
+          echo "#### 三大法人期貨淨部位資料" >> summary.md
+          if [ -f data/institutional_latest.json ]; then
+            echo "\`\`\`json" >> summary.md
+            head -n 20 data/institutional_latest.json >> summary.md
+            echo "\`\`\`" >> summary.md
+          else
+            echo "找不到三大法人期貨淨部位資料" >> summary.md
+          fi
+      
+      - name: 上傳爬取結果作為成品
+        uses: actions/upload-artifact@v3
+        with:
+          name: taifex-data
+          path: |
+            data/*.json
+            summary.md
       
       - name: 設定 Node.js 環境
         uses: actions/setup-node@v3
@@ -43,14 +79,19 @@ jobs:
       - name: 安裝 Node.js 依賴套件
         run: npm install
       
-      - name: 將資料導入 MongoDB
-        run: node import_taifex_data.js
+      - name: 將 PC Ratio 資料導入 MongoDB
+        run: node import_taifex_data.js --type=pcRatio
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
       
-      # 使用 GitHub Actions 日誌功能記錄執行結果
-      - name: 記錄執行結果
-        run: |
-          echo "爬蟲和資料導入已完成"
-          echo "時間: $(date)"
-          echo "最新資料檔案大小: $(du -h data/pc_ratio_latest.json | cut -f1)"
+      - name: 將三大法人期貨淨部位資料導入 MongoDB
+        run: node import_taifex_data.js --type=institutional
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      
+      - name: 創建或更新 GitHub Issue 來顯示結果
+        if: success()
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          issue-number: ${{ github.event.issue.number || 1 }}  # 自動使用觸發工作流的Issue
+          body-file: summary.md
