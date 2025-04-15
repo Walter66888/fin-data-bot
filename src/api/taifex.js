@@ -1,10 +1,12 @@
 /**
  * 期交所 API 模組
- * 負責從台灣期貨交易所開放 API 獲取資料
+ * 負責從台灣期貨交易所開放 API 獲取資料，以及從 MongoDB 讀取爬蟲數據
  */
 
 const axios = require('axios');
 const logger = require('../utils/logger');
+const FuturesMarketData = require('../db/models/FuturesMarketData');
+const { format } = require('date-fns');
 
 // API 基礎 URL
 const BASE_URL = 'https://openapi.taifex.com.tw/v1';
@@ -135,11 +137,56 @@ async function getLargeTradersOptions() {
 
 /**
  * 獲取臺指選擇權 Put/Call 比率
+ * 優先從 MongoDB 讀取爬蟲數據，如果沒有則嘗試使用 API
+ * 
  * @returns {Promise<Array|null>} Put/Call 比率資料，如果請求失敗則返回 null
  */
 async function getPutCallRatio() {
-  const result = await fetchAPI('PutCallRatio');
-  return result ? result.data : null;
+  try {
+    // 優先從 MongoDB 獲取爬蟲數據
+    logger.info('嘗試從 MongoDB 獲取 Put/Call 比率資料');
+    
+    // 獲取今天的日期
+    const today = format(new Date(), 'yyyy-MM-dd');
+    
+    // 嘗試獲取今天的數據
+    let futuresData = await FuturesMarketData.findOne({ date: today });
+    
+    // 如果沒有今天的數據，獲取最新的一筆數據
+    if (!futuresData) {
+      futuresData = await FuturesMarketData.findOne().sort({ date: -1 }).limit(1);
+    }
+    
+    // 如果找到數據並且包含 putCallRatio
+    if (futuresData && futuresData.putCallRatio) {
+      logger.info(`從 MongoDB 獲取到 ${futuresData.date} 的 Put/Call 比率資料`);
+      
+      // 轉換為 API 格式
+      const apiFormatData = [{
+        Date: futuresData.date.replace(/-/g, '/'),
+        PutVolume: futuresData.putCallRatio.putVolume.toLocaleString(),
+        CallVolume: futuresData.putCallRatio.callVolume.toLocaleString(),
+        'PutCallVolumeRatio%': futuresData.putCallRatio.volumeRatio.toString(),
+        PutOI: futuresData.putCallRatio.putOI.toLocaleString(),
+        CallOI: futuresData.putCallRatio.callOI.toLocaleString(),
+        'PutCallOIRatio%': futuresData.putCallRatio.oiRatio.toString()
+      }];
+      
+      return apiFormatData;
+    }
+    
+    // 如果 MongoDB 中沒有數據，則嘗試使用 API
+    logger.info('MongoDB 中沒有 Put/Call 比率資料，嘗試使用 API');
+    const result = await fetchAPI('PutCallRatio');
+    return result ? result.data : null;
+  } catch (error) {
+    logger.error('獲取 Put/Call 比率資料時發生錯誤:', error);
+    
+    // 出錯時嘗試使用 API 作為後備
+    logger.info('嘗試使用 API 作為後備獲取 Put/Call 比率資料');
+    const result = await fetchAPI('PutCallRatio');
+    return result ? result.data : null;
+  }
 }
 
 /**
