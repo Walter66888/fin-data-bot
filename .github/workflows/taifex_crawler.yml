@@ -1,0 +1,49 @@
+name: TAIFEX Data Crawler
+
+on:
+  schedule:
+    # 每個交易日下午 3:00 執行 (UTC+8 = UTC 07:00)
+    - cron: '0 7 * * 1-5'
+  # 允許手動觸發
+  workflow_dispatch:
+
+jobs:
+  crawl-and-import:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas lxml requests
+      
+      - name: Crawl TAIFEX PC Ratio Data
+        run: python taifex_pc_ratio_crawler.py
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      
+      - name: Install Node.js dependencies
+        run: npm install
+      
+      - name: Import data to MongoDB
+        run: node import_taifex_data.js
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      
+      - name: Upload JSON artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: taifex-data
+          path: data/
+          retention-days: 7
