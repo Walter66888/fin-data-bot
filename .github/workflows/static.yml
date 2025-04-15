@@ -1,0 +1,173 @@
+# 將爬蟲結果部署到GitHub Pages的工作流
+name: 部署爬蟲結果到GitHub Pages
+
+on:
+  # 在爬蟲工作流完成後觸發
+  workflow_run:
+    workflows: ["TAIFEX 資料爬蟲"]
+    types:
+      - completed
+  # 允許手動觸發
+  workflow_dispatch:
+
+# 設置GITHUB_TOKEN的權限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 允許一次部署
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # 構建頁面
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v3
+      
+      - name: 設置Pages
+        uses: actions/configure-pages@v3
+      
+      - name: 創建數據目錄和初始HTML
+        run: |
+          mkdir -p data
+          mkdir -p _site
+          
+          # 如果爬蟲文件存在，複製到_site目錄
+          if [ -d "data" ]; then
+            cp -r data/* _site/ || echo "No data files to copy"
+          fi
+          
+          # 創建索引頁面
+          cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>期交所爬蟲結果</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+              h1, h2 { color: #2c3e50; }
+              .data-container { margin-bottom: 30px; }
+              .json-display { background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; max-height: 500px; }
+              .file-list { margin: 20px 0; }
+              .file-list a { color: #3498db; text-decoration: none; display: block; margin: 5px 0; }
+              .file-list a:hover { text-decoration: underline; }
+              .updated-time { color: #7f8c8d; font-size: 0.9em; }
+            </style>
+          </head>
+          <body>
+            <h1>期交所爬蟲結果</h1>
+            <p class="updated-time">頁面更新時間: <span id="update-time"></span></p>
+            <script>document.getElementById('update-time').textContent = new Date().toLocaleString('zh-TW');</script>
+            
+            <div class="data-container">
+              <h2>台指選擇權 Put/Call 比率</h2>
+              <div id="pc-ratio-container">
+                <p>查看檔案列表中的 pc_ratio_latest.json</p>
+              </div>
+            </div>
+            
+            <div class="data-container">
+              <h2>三大法人期貨淨部位</h2>
+              <div id="institutional-container">
+                <p>查看檔案列表中的 institutional_latest.json</p>
+              </div>
+            </div>
+            
+            <div class="file-list">
+              <h2>檔案列表</h2>
+              <div id="file-list">載入中...</div>
+            </div>
+            
+            <script>
+              // 獲取並顯示文件列表
+              fetch('/')
+                .then(response => response.text())
+                .then(html => {
+                  const parser = new DOMParser();
+                  const doc = parser.parseFromString(html, 'text/html');
+                  const links = Array.from(doc.querySelectorAll('a'))
+                    .filter(a => a.href.endsWith('.json'))
+                    .map(a => a.href.split('/').pop());
+                  
+                  const fileListElement = document.getElementById('file-list');
+                  fileListElement.innerHTML = '';
+                  
+                  if (links.length === 0) {
+                    fileListElement.textContent = '暫無爬蟲結果檔案';
+                    return;
+                  }
+                  
+                  links.forEach(filename => {
+                    const link = document.createElement('a');
+                    link.href = filename;
+                    link.textContent = filename;
+                    fileListElement.appendChild(link);
+                    fileListElement.appendChild(document.createElement('br'));
+                  });
+                  
+                  // 嘗試載入最新的 PC Ratio 和三大法人資料
+                  if (links.includes('pc_ratio_latest.json')) {
+                    loadJsonToContainer('pc_ratio_latest.json', 'pc-ratio-container');
+                  }
+                  
+                  if (links.includes('institutional_latest.json')) {
+                    loadJsonToContainer('institutional_latest.json', 'institutional-container');
+                  }
+                })
+                .catch(error => {
+                  document.getElementById('file-list').textContent = '無法載入檔案列表: ' + error;
+                });
+              
+              // 載入 JSON 並顯示在頁面上
+              function loadJsonToContainer(filename, containerId) {
+                fetch(filename)
+                  .then(response => response.json())
+                  .then(data => {
+                    const container = document.getElementById(containerId);
+                    container.innerHTML = '';
+                    
+                    // 顯示資料日期
+                    if (Array.isArray(data) && data.length > 0 && data[0].Date) {
+                      const dateElem = document.createElement('p');
+                      dateElem.className = 'updated-time';
+                      dateElem.textContent = `資料日期: ${data[0].Date}`;
+                      container.appendChild(dateElem);
+                    }
+                    
+                    // 顯示 JSON 內容
+                    const pre = document.createElement('pre');
+                    pre.className = 'json-display';
+                    pre.textContent = JSON.stringify(data, null, 2);
+                    container.appendChild(pre);
+                  })
+                  .catch(error => {
+                    const container = document.getElementById(containerId);
+                    container.textContent = `載入 ${filename} 失敗: ${error}`;
+                  });
+              }
+            </script>
+          </body>
+          </html>
+          EOF
+      
+      - name: 上傳成品
+        uses: actions/upload-pages-artifact@v1
+
+  # 部署到GitHub Pages
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: 部署到GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
