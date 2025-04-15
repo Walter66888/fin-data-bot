@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import os
 import logging
+import requests
 
 # 設定日誌
 logging.basicConfig(
@@ -46,7 +47,7 @@ def crawl_pc_ratio():
             # 將 DataFrame 轉換為字典列表
             data = df.to_dict('records')
             
-            # 日期格式轉換（如果需要）
+            # 日期格式轉換（處理中華民國年份格式）
             for item in data:
                 # 如果日期是中文格式（如：112/04/15），轉換為西元年格式
                 if '/' in str(item['Date']):
@@ -81,8 +82,44 @@ def crawl_pc_ratio():
         logger.error(f'爬取資料時發生錯誤: {str(e)}')
         return None
 
+# 檢查之前的資料並決定是否進行爬蟲
+def check_and_crawl():
+    """
+    檢查既有資料，如果沒有資料或資料過期，則進行爬蟲
+    """
+    need_crawl = True
+    
+    # 檢查最新數據文件是否存在
+    latest_file = 'data/pc_ratio_latest.json'
+    if os.path.exists(latest_file):
+        try:
+            # 讀取最新數據
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            if data and len(data) > 0:
+                # 檢查資料日期是否為今天
+                latest_date = data[0]['Date']
+                today = datetime.now().strftime('%Y/%m/%d')
+                
+                # 如果最新資料日期是今天，則不需要爬蟲
+                if latest_date == today:
+                    logger.info(f'已有今日 ({today}) 的資料，不需要重新爬取')
+                    need_crawl = False
+                else:
+                    logger.info(f'最新資料日期 ({latest_date}) 不是今天 ({today})，將重新爬取')
+        except Exception as e:
+            logger.error(f'檢查既有資料時發生錯誤: {str(e)}')
+    else:
+        logger.info('找不到既有資料，將進行首次爬取')
+    
+    # 如果需要爬蟲，執行爬蟲
+    if need_crawl:
+        return crawl_pc_ratio()
+    return latest_file
+
 if __name__ == '__main__':
-    output_file = crawl_pc_ratio()
+    output_file = check_and_crawl()
     if output_file:
         logger.info(f'爬蟲程序完成，數據已保存至 {output_file}')
     else:
