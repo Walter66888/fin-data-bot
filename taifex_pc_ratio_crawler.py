@@ -73,6 +73,12 @@ def crawl_pc_ratio():
             with open(latest_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
+            # 輸出摘要資訊到日誌，以便在 GitHub Actions 日誌中查看
+            if len(data) > 0:
+                logger.info(f'爬取到的最新資料日期: {data[0]["Date"]}')
+                logger.info(f'成交量比率: {data[0]["PutCallVolumeRatio%"]}')
+                logger.info(f'未平倉量比率: {data[0]["PutCallOIRatio%"]}')
+            
             logger.info(f'數據已保存至 {output_file} 和 {latest_file}')
             return output_file
         else:
@@ -101,6 +107,8 @@ def check_and_crawl():
                 # 檢查資料日期是否為今天
                 latest_date = data[0]['Date']
                 today = datetime.now().strftime('%Y/%m/%d')
+                
+                logger.info(f'既有資料日期: {latest_date}, 今日日期: {today}')
                 
                 # 如果最新資料日期是今天，則不需要爬蟲
                 if latest_date == today:
