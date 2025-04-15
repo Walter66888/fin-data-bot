@@ -45,7 +45,7 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
       
       - name: 上傳 JSON 文件
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v2
         with:
           name: taifex-data
           path: data/
