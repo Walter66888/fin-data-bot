@@ -44,10 +44,11 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
       
-      # 使用簡單的命令列輸出替代上傳功能
-      - name: 顯示爬取結果摘要
-        run: |
-          echo "===== 爬取結果摘要 ====="
-          ls -la data/
-          echo "===== 資料預覽 ====="
-          head -n 20 data/pc_ratio_latest.json || echo "找不到最新資料文件"
+      # 使用特定提交版本的 upload-artifact 動作
+      # 這個提交版本是 v3 的穩定版本
+      - name: 上傳 JSON 文件
+        uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb
+        with:
+          name: taifex-data
+          path: data/
+          retention-days: 7
