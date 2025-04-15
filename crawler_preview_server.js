@@ -1,5 +1,5 @@
 /**
- * 爬蟲結果預覽服務器
+ * 爬蟲結果預覽伺服器
  * 提供網頁查看爬蟲結果，確認數據無誤
  */
 
@@ -43,6 +43,14 @@ app.get('/', (req, res) => {
     });
     
     html += '</ul>';
+    
+    // 添加手動觸發爬蟲的按鈕
+    html += `
+      <h2>手動操作</h2>
+      <button onclick="location.href='/crawl'">手動執行爬蟲</button>
+      <button onclick="location.href='/import'">導入到資料庫</button>
+    `;
+    
     res.send(html);
   } catch (error) {
     res.status(500).send(`發生錯誤：${error.message}`);
@@ -102,6 +110,66 @@ app.get('/preview/:filename', (req, res) => {
     res.send(html);
   } catch (error) {
     res.status(500).send(`發生錯誤：${error.message}`);
+  }
+});
+
+// 路由：手動執行爬蟲
+app.get('/crawl', (req, res) => {
+  try {
+    const { spawn } = require('child_process');
+    
+    // 執行 Python 爬蟲腳本
+    const crawler = spawn('python', ['taifex_pc_ratio_crawler.py']);
+    
+    let output = '';
+    
+    crawler.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    crawler.stderr.on('data', (data) => {
+      output += `錯誤: ${data.toString()}`;
+    });
+    
+    crawler.on('close', (code) => {
+      if (code === 0) {
+        res.send(`<h1>爬蟲執行成功</h1><pre>${output}</pre><a href="/">返回列表</a>`);
+      } else {
+        res.status(500).send(`<h1>爬蟲執行失敗 (代碼: ${code})</h1><pre>${output}</pre><a href="/">返回列表</a>`);
+      }
+    });
+  } catch (error) {
+    res.status(500).send(`執行爬蟲時發生錯誤：${error.message}<br><a href="/">返回列表</a>`);
+  }
+});
+
+// 路由：手動導入到資料庫
+app.get('/import', (req, res) => {
+  try {
+    const { spawn } = require('child_process');
+    
+    // 執行 Node.js 導入腳本
+    const importer = spawn('node', ['import_taifex_data.js']);
+    
+    let output = '';
+    
+    importer.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+    
+    importer.stderr.on('data', (data) => {
+      output += `錯誤: ${data.toString()}`;
+    });
+    
+    importer.on('close', (code) => {
+      if (code === 0) {
+        res.send(`<h1>資料導入成功</h1><pre>${output}</pre><a href="/">返回列表</a>`);
+      } else {
+        res.status(500).send(`<h1>資料導入失敗 (代碼: ${code})</h1><pre>${output}</pre><a href="/">返回列表</a>`);
+      }
+    });
+  } catch (error) {
+    res.status(500).send(`執行資料導入時發生錯誤：${error.message}<br><a href="/">返回列表</a>`);
   }
 });
 
