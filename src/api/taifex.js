@@ -146,6 +146,16 @@ async function getPutCallRatio() {
     // 優先從 MongoDB 獲取爬蟲數據
     logger.info('嘗試從 MongoDB 獲取 Put/Call 比率資料');
     
+    // 檢查 MongoDB 中是否有數據
+    const count = await FuturesMarketData.countDocuments();
+    
+    // 資料庫為空時，可能是首次運行
+    if (count === 0) {
+      logger.info('MongoDB 中沒有任何期貨市場資料，嘗試使用 API');
+      const result = await fetchAPI('PutCallRatio');
+      return result ? result.data : null;
+    }
+    
     // 獲取今天的日期
     const today = format(new Date(), 'yyyy-MM-dd');
     
@@ -155,6 +165,7 @@ async function getPutCallRatio() {
     // 如果沒有今天的數據，獲取最新的一筆數據
     if (!futuresData) {
       futuresData = await FuturesMarketData.findOne().sort({ date: -1 }).limit(1);
+      logger.info(`未找到今日 (${today}) 資料，使用最新資料: ${futuresData.date}`);
     }
     
     // 如果找到數據並且包含 putCallRatio
@@ -176,7 +187,7 @@ async function getPutCallRatio() {
     }
     
     // 如果 MongoDB 中沒有數據，則嘗試使用 API
-    logger.info('MongoDB 中沒有 Put/Call 比率資料，嘗試使用 API');
+    logger.info('MongoDB 中沒有完整的 Put/Call 比率資料，嘗試使用 API');
     const result = await fetchAPI('PutCallRatio');
     return result ? result.data : null;
   } catch (error) {
@@ -199,23 +210,42 @@ function standardizeDate(dateStr) {
   if (!dateStr) return '';
   
   // 移除可能的非數字字符（例如斜線）
-  dateStr = dateStr.replace(/\D/g, '');
+  const cleanDateStr = dateStr.replace(/\D/g, '');
   
   // 檢查是否為中華民國年份格式（例如 1140401）
-  if (dateStr.length === 7) {
-    const rocYear = parseInt(dateStr.substring(0, 3), 10);
-    const month = dateStr.substring(3, 5);
-    const day = dateStr.substring(5, 7);
+  if (cleanDateStr.length === 7) {
+    const rocYear = parseInt(cleanDateStr.substring(0, 3), 10);
+    const month = cleanDateStr.substring(3, 5);
+    const day = cleanDateStr.substring(5, 7);
     const westernYear = rocYear + 1911;
     return `${westernYear}-${month}-${day}`;
   }
   
   // 檢查是否為西元年份格式（例如 20250401）
-  if (dateStr.length === 8) {
-    const year = dateStr.substring(0, 4);
-    const month = dateStr.substring(4, 6);
-    const day = dateStr.substring(6, 8);
+  if (cleanDateStr.length === 8) {
+    const year = cleanDateStr.substring(0, 4);
+    const month = cleanDateStr.substring(4, 6);
+    const day = cleanDateStr.substring(6, 8);
     return `${year}-${month}-${day}`;
+  }
+  
+  // 處理斜線分隔的日期格式（如：2023/04/15）
+  if (dateStr.includes('/')) {
+    try {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        // 檢查是否為民國年
+        if (parseInt(parts[0]) < 200) {
+          const rocYear = parseInt(parts[0], 10);
+          const westernYear = rocYear + 1911;
+          return `${westernYear}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        } else {
+          return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        }
+      }
+    } catch (e) {
+      logger.warn(`無法解析日期格式(斜線分隔): ${dateStr}`, e);
+    }
   }
   
   // 原始格式可能已經是 YYYY-MM-DD
@@ -224,6 +254,7 @@ function standardizeDate(dateStr) {
   }
   
   // 如果無法識別，返回原始字串
+  logger.warn(`無法標準化日期格式: ${dateStr}`);
   return dateStr;
 }
 
