@@ -1,6 +1,7 @@
 /**
  * 期交所爬蟲資料導入 MongoDB 腳本
  * 讀取 Python 爬蟲生成的 JSON 資料並導入資料庫
+ * 增強版：添加更多日誌記錄，方便在 GitHub Actions 中查看執行結果
  */
 
 require('dotenv').config();
@@ -81,8 +82,16 @@ function processPutCallRatio(data) {
     // 通常取最新的一筆資料（第一筆）
     const latestData = data[0];
     
+    // 輸出最新資料的摘要，方便在日誌中查看
+    logger.info(`處理資料日期: ${latestData.Date}`);
+    logger.info(`買權成交量: ${latestData.CallVolume}, 賣權成交量: ${latestData.PutVolume}`);
+    logger.info(`成交量比率: ${latestData['PutCallVolumeRatio%']}`);
+    logger.info(`買權未平倉量: ${latestData.CallOI}, 賣權未平倉量: ${latestData.PutOI}`);
+    logger.info(`未平倉量比率: ${latestData['PutCallOIRatio%']}`);
+    
     // 標準化日期格式
     const standardizedDate = standardizeDate(latestData.Date);
+    logger.info(`標準化後的日期: ${standardizedDate}`);
     
     // 轉換為數字型別
     const result = {
@@ -122,6 +131,7 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
     
     if (futuresData) {
       // 更新現有資料
+      logger.info(`找到既有資料記錄 (日期: ${processedData.date})，進行更新`);
       
       // 更新 PCR 比率資料
       if (processedData.pcRatio) {
@@ -154,6 +164,8 @@ async function updateFuturesMarketData(processedData, rawDataObj) {
       logger.info(`已更新既有期貨市場資料: ${processedData.date}`);
     } else {
       // 創建新資料
+      logger.info(`未找到既有資料記錄，創建新記錄 (日期: ${processedData.date})`);
+      
       const newFuturesData = {
         date: processedData.date,
         dataTimestamp: new Date(),
@@ -210,6 +222,9 @@ async function importData(filePath) {
       return false;
     }
     
+    // 輸出 JSON 資料的基本資訊
+    logger.info(`JSON 資料包含 ${jsonData.length} 筆記錄`);
+    
     // 處理 PC Ratio 資料
     const processedData = processPutCallRatio(jsonData);
     
@@ -220,6 +235,20 @@ async function importData(filePath) {
       });
       
       logger.info(`成功導入 ${processedData.date} 的 PC Ratio 資料`);
+      
+      // 輸出導入後的摘要
+      const latestFuturesData = await FuturesMarketData.findOne({ 
+        date: processedData.date 
+      });
+      
+      if (latestFuturesData) {
+        logger.info('MongoDB 中的資料摘要:');
+        logger.info(`日期: ${latestFuturesData.date}`);
+        logger.info(`未平倉量比率: ${latestFuturesData.putCallRatio.oiRatio}`);
+        logger.info(`成交量比率: ${latestFuturesData.putCallRatio.volumeRatio}`);
+        logger.info(`最後更新時間: ${latestFuturesData.lastUpdated}`);
+      }
+      
       return true;
     } else {
       logger.error('處理 PC Ratio 資料失敗');
@@ -237,61 +266,15 @@ async function importData(filePath) {
  */
 async function checkAndImportData() {
   try {
-    // 檢查資料庫中是否有期貨市場資料
-    const count = await FuturesMarketData.countDocuments();
-    
-    // 如果數據庫為空，需要首次抓取
-    if (count === 0) {
-      logger.info('資料庫中沒有期貨市場資料，需要執行爬蟲');
-      
-      // 如果沒有 JSON 檔案，需要先執行爬蟲
-      const filePath = path.join(__dirname, 'data', 'pc_ratio_latest.json');
-      if (!fs.existsSync(filePath)) {
-        logger.info('找不到 JSON 檔案，請先執行爬蟲腳本');
-        process.exit(1);
-      }
-      
-      // 導入資料
-      return await importData(filePath);
-    } else {
-      // 獲取最新的一筆資料
-      const latestData = await FuturesMarketData.findOne().sort({ date: -1 }).limit(1);
-      
-      // 檢查最新資料日期是否為今天
-      const today = format(new Date(), 'yyyy-MM-dd');
-      
-      if (latestData.date === today) {
-        logger.info(`今日 (${today}) 的資料已存在，不需要更新`);
-        return true;
-      } else {
-        logger.info(`最新資料日期 (${latestData.date}) 不是今天 (${today})，檢查爬蟲結果並更新`);
-        
-        // 檢查 JSON 檔案
-        const filePath = path.join(__dirname, 'data', 'pc_ratio_latest.json');
-        if (!fs.existsSync(filePath)) {
-          logger.info('找不到 JSON 檔案，請先執行爬蟲腳本');
-          return false;
-        }
-        
-        // 讀取 JSON 檔案，檢查日期
-        const jsonData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        if (jsonData && jsonData.length > 0) {
-          const jsonDate = standardizeDate(jsonData[0].Date);
-          
-          // 如果 JSON 資料日期比資料庫日期新，則更新資料庫
-          if (jsonDate > latestData.date) {
-            logger.info(`JSON 檔案日期 (${jsonDate}) 比資料庫最新日期新，進行更新`);
-            return await importData(filePath);
-          } else {
-            logger.info(`JSON 檔案日期 (${jsonDate}) 不比資料庫最新日期新，不需更新`);
-            return true;
-          }
-        } else {
-          logger.error('JSON 資料無效或為空');
-          return false;
-        }
-      }
+    // 檢查爬蟲資料文件是否存在
+    const filePath = path.join(__dirname, 'data', 'pc_ratio_latest.json');
+    if (!fs.existsSync(filePath)) {
+      logger.error(`找不到爬蟲資料文件: ${filePath}`);
+      return false;
     }
+    
+    // 導入資料
+    return await importData(filePath);
   } catch (error) {
     logger.error('檢查並導入資料時發生錯誤:', error);
     return false;
@@ -303,6 +286,10 @@ async function checkAndImportData() {
  */
 async function main() {
   try {
+    // 輸出環境資訊
+    logger.info(`執行環境: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`執行時間: ${new Date().toISOString()}`);
+    
     // 連接資料庫
     await connectDB();
     
@@ -310,14 +297,25 @@ async function main() {
     const success = await checkAndImportData();
     
     if (success) {
-      logger.info('資料檢查與導入流程成功完成');
+      logger.info('資料導入成功完成');
     } else {
-      logger.error('資料檢查與導入流程失敗');
+      logger.error('資料導入失敗');
     }
     
     // 關閉資料庫連接
     await mongoose.disconnect();
     logger.info('已斷開與 MongoDB 的連接');
+    
+    // 添加一個明確的成功/失敗訊息，方便在 GitHub Actions 日誌中查看
+    if (success) {
+      console.log('=============================');
+      console.log('✅ 爬蟲資料已成功導入 MongoDB');
+      console.log('=============================');
+    } else {
+      console.log('=============================');
+      console.log('❌ 爬蟲資料導入 MongoDB 失敗');
+      console.log('=============================');
+    }
     
     process.exit(success ? 0 : 1);
   } catch (error) {
