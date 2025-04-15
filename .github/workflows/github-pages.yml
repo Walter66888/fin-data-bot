@@ -1,0 +1,130 @@
+name: 部署爬蟲結果到 GitHub Pages
+
+on:
+  # 在爬蟲工作流完成後觸發
+  workflow_run:
+    workflows: ["TAIFEX 資料爬蟲"]
+    types:
+      - completed
+  # 允許手動觸發
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v3
+      
+      - name: 下載爬蟲結果
+        uses: actions/download-artifact@v3
+        with:
+          name: taifex-data
+          path: data
+      
+      - name: 生成結果頁面
+        run: |
+          mkdir -p gh-pages
+          cp -r data gh-pages/
+          
+          # 創建索引頁面
+          cat > gh-pages/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>期交所爬蟲結果</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+              h1, h2 { color: #2c3e50; }
+              .data-container { margin-bottom: 30px; }
+              .json-display { background-color: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; max-height: 500px; }
+              .file-list { margin: 20px 0; }
+              .file-list a { color: #3498db; text-decoration: none; display: block; margin: 5px 0; }
+              .file-list a:hover { text-decoration: underline; }
+              .updated-time { color: #7f8c8d; font-size: 0.9em; }
+            </style>
+            <script>
+              async function loadAndDisplayJson(url, elementId) {
+                try {
+                  const response = await fetch(url);
+                  if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+                  
+                  const data = await response.json();
+                  const preElement = document.getElementById(elementId);
+                  
+                  // 格式化顯示 JSON
+                  preElement.textContent = JSON.stringify(data, null, 2);
+                  
+                  // 如果是陣列，顯示第一筆資料的日期
+                  if (Array.isArray(data) && data.length > 0 && data[0].Date) {
+                    const dateElement = document.createElement('div');
+                    dateElement.classList.add('updated-time');
+                    dateElement.textContent = `資料日期: ${data[0].Date}`;
+                    preElement.parentElement.insertBefore(dateElement, preElement);
+                  }
+                } catch (error) {
+                  document.getElementById(elementId).textContent = '載入資料失敗: ' + error.message;
+                }
+              }
+              
+              // 當頁面載入時載入資料
+              window.onload = function() {
+                loadAndDisplayJson('pc_ratio_latest.json', 'pc-ratio-data');
+                loadAndDisplayJson('institutional_latest.json', 'institutional-data');
+              };
+            </script>
+          </head>
+          <body>
+            <h1>期交所爬蟲結果</h1>
+            <p class="updated-time">頁面更新時間: <span id="update-time"></span></p>
+            <script>document.getElementById('update-time').textContent = new Date().toLocaleString('zh-TW');</script>
+            
+            <div class="data-container">
+              <h2>台指選擇權 Put/Call 比率</h2>
+              <pre id="pc-ratio-data" class="json-display">載入中...</pre>
+            </div>
+            
+            <div class="data-container">
+              <h2>三大法人期貨淨部位</h2>
+              <pre id="institutional-data" class="json-display">載入中...</pre>
+            </div>
+            
+            <div class="file-list">
+              <h2>所有資料檔案</h2>
+              <div id="file-links">載入中...</div>
+            </div>
+            
+            <script>
+              // 生成檔案列表
+              fetch('file-list.json')
+                .then(response => response.json())
+                .then(files => {
+                  const fileLinksContainer = document.getElementById('file-links');
+                  fileLinksContainer.innerHTML = '';
+                  
+                  files.forEach(file => {
+                    const link = document.createElement('a');
+                    link.href = file;
+                    link.textContent = file;
+                    fileLinksContainer.appendChild(link);
+                  });
+                })
+                .catch(error => {
+                  document.getElementById('file-links').textContent = '無法載入檔案列表: ' + error.message;
+                });
+            </script>
+          </body>
+          </html>
+          EOF
+          
+          # 生成檔案列表
+          ls -1 gh-pages/ | grep -E '\.json$' | jq -R -s -c 'split("\n") | map(select(length > 0))' > gh-pages/file-list.json
+      
+      - name: 部署到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./gh-pages
